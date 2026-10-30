@@ -89,7 +89,8 @@ router.post('/register', async (req: Request, res: Response) => {
       user: safeUser,
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    const message = (error as Error).message;
+    res.status(message.includes('already exists') ? 409 : 500).json({ success: false, error: message });
   }
 });
 

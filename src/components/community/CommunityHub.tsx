@@ -16,6 +16,8 @@ import {
   ShieldAlert,
   Loader2,
   AlertCircle,
+  MapPin,
+  Search,
 } from 'lucide-react'
 import { UserProfile } from '../../types/navigation'
 import {
@@ -49,7 +51,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
 }) => {
   const [posts, setPosts] = useState<CommunityPost[]>(() => {
     try {
-      const stored = localStorage.getItem('upwise_community_posts_v1')
+      const stored = localStorage.getItem('upwise_community_posts')
       if (stored) {
         return JSON.parse(stored)
       }
@@ -91,7 +93,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
   const [sourceLinkInput, setSourceLinkInput] = useState('')
   const [disclaimerAgreed, setDisclaimerAgreed] = useState(false)
   const [isSubmittingPost, setIsSubmittingPost] = useState(false)
-  const [composerErrors, setComposerErrors] = useState<{ title?: string; content?: string; disclaimer?: string }>({})
+  const [composerErrors, setComposerErrors] = useState<{ title?: string; content?: string; disclaimer?: string; city?: string; source?: string }>({})
 
   // Reporting & Moderation State
   const [reportingPostId, setReportingPostId] = useState<string | null>(null)
@@ -112,7 +114,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
     let isCurrent = true
     fetchCommunityPostsApi({})
       .then((res) => {
-        if (!isCurrent || !res?.data || res.data.length === 0) return
+        if (!isCurrent || !res?.data) return
         setPosts(res.data)
       })
       .catch(() => {})
@@ -120,15 +122,6 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
       isCurrent = false
     }
   }, [])
-
-  const savePostsToStorage = (updatedPosts: CommunityPost[]) => {
-    setPosts(updatedPosts)
-    try {
-      localStorage.setItem('upwise_community_posts_v1', JSON.stringify(updatedPosts))
-    } catch {
-      // Storage fallback
-    }
-  }
 
   const handleCloseComposer = () => {
     setIsComposerOpen(false)
@@ -144,13 +137,15 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
       return
     }
 
-    const errors: { title?: string; content?: string; disclaimer?: string } = {}
+    const errors: { title?: string; content?: string; disclaimer?: string; city?: string; source?: string } = {}
     if (!titleInput.trim() || titleInput.trim().length < 6) {
       errors.title = 'Headline must be at least 6 characters.'
     }
-    if (!contentInput.trim() || contentInput.trim().length < 15) {
-      errors.content = 'Dispatch body must be at least 15 characters.'
+    if (!contentInput.trim() || contentInput.trim().length < 20) {
+      errors.content = 'Dispatch body must be at least 20 characters.'
     }
+    if (cityInput.trim().length < 2) errors.city = 'Please enter the reporting city or campus.'
+    if (!sourceLinkInput.trim()) errors.source = 'Please provide a source link for editorial verification.'
     if (!disclaimerAgreed) {
       errors.disclaimer = 'You must acknowledge the verification disclaimer.'
     }
@@ -165,7 +160,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
       const created = await createCommunityPostApi({
         title: titleInput.trim(),
         description: contentInput.trim(),
-        city: cityInput.trim() || 'New Delhi',
+        city: cityInput.trim(),
         category: categoryInput,
         sourceUrl: sourceLinkInput.trim() || undefined,
         disclaimerAgreed: true,
@@ -179,7 +174,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
       setIsComposerOpen(false)
       onComposerClosed?.()
 
-      setNoticeMessage('Your dispatch has been submitted to the community feed.')
+      setNoticeMessage('Your dispatch has been submitted for editorial review.')
     } catch (err: any) {
       setComposerErrors({ content: err.message || 'Failed to publish dispatch' })
     } finally {
@@ -188,31 +183,31 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
     }
   }
 
-  const handleToggleUpvote = (postId: string) => {
-    const hasVoted = votedPostIds.includes(postId)
-    const newVoted = hasVoted
-      ? votedPostIds.filter((id) => id !== postId)
-      : [...votedPostIds, postId]
-
-    setVotedPostIds(newVoted)
-    try {
-      localStorage.setItem('upwise_community_voted_post_ids', JSON.stringify(newVoted))
-    } catch {
-      // Storage fallback
+  const [pendingVotes, setPendingVotes] = useState<string[]>([])
+  const votingPosts = React.useRef(new Set<string>())
+  const handleToggleUpvote = async (postId: string) => {
+    if (!currentUser) {
+      setNoticeMessage('Please sign in to upvote community dispatches.')
+      onRequireLogin?.()
+      return
     }
-
-    const updated = posts.map((post) => {
-      if (post.id === postId) {
-        return {
-          ...post,
-          upvotes: hasVoted ? Math.max(0, post.upvotes - 1) : post.upvotes + 1,
-        }
-      }
-      return post
-    })
-
-    savePostsToStorage(updated)
-    togglePostReactionApi(postId).catch(() => {})
+    if (votingPosts.current.has(postId)) return
+    votingPosts.current.add(postId)
+    setPendingVotes((prev) => [...prev, postId])
+    try {
+      const result = await togglePostReactionApi(postId)
+      setPosts((prev) => prev.map((p) => p.id === postId ? { ...p, ...result } : p))
+      setVotedPostIds((prev) => {
+        const next = result.hasUpvoted ? [...prev.filter((id) => id !== postId), postId] : prev.filter((id) => id !== postId)
+        try { localStorage.setItem('upwise_community_voted_post_ids', JSON.stringify(next)) } catch { /* Storage unavailable */ }
+        return next
+      })
+    } catch (err) {
+      setNoticeMessage(err instanceof Error ? err.message : 'Unable to save vote')
+    } finally {
+      votingPosts.current.delete(postId)
+      setPendingVotes((prev) => prev.filter((id) => id !== postId))
+    }
   }
 
   const handleOpenReport = (postId: string) => {
@@ -228,7 +223,8 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
     setIsSubmittingReport(true)
     try {
       const res = await reportCommunityPostApi(reportingPostId, reportReason, reportDetails)
-      setNoticeMessage(res.message || 'Report submitted to editorial moderators.')
+      setNoticeMessage(res.message)
+      if (!res.success) return
       setReportingPostId(null)
       setReportDetails('')
     } catch (err: any) {
@@ -272,6 +268,11 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
   }
 
   const handleToggleSavePost = (postId: string) => {
+    if (!currentUser) {
+      setNoticeMessage('Please sign in to save community dispatches.')
+      onRequireLogin?.()
+      return
+    }
     const isSaved = savedPostIds.includes(postId)
     const newSaved = isSaved
       ? savedPostIds.filter((id) => id !== postId)
@@ -285,35 +286,26 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
     }
   }
 
-  const handleAddComment = (postId: string, e: React.FormEvent) => {
+  const commentingPosts = React.useRef(new Set<string>())
+  const handleAddComment = async (postId: string, e: React.FormEvent) => {
     e.preventDefault()
-    const text = commentInput[postId]?.trim()
-    if (!text) return
-
-    const authorName = currentUser?.name || 'Reader'
-    const authorInitials = currentUser?.initials || 'RD'
-
-    const newComment: CommunityComment = {
-      id: `comment-${Date.now()}`,
-      authorName,
-      authorInitials,
-      content: text,
-      createdAt: 'Just now',
+    if (!currentUser) {
+      setNoticeMessage('Please sign in to reply to dispatches.')
+      onRequireLogin?.()
+      return
     }
-
-    const updated = posts.map((post) => {
-      if (post.id === postId) {
-        return {
-          ...post,
-          comments: [...post.comments, newComment],
-        }
-      }
-      return post
-    })
-
-    savePostsToStorage(updated)
-    addCommentApi(postId, text).catch(() => {})
-    setCommentInput((prev) => ({ ...prev, [postId]: '' }))
+    const text = commentInput[postId]?.trim()
+    if (!text || commentingPosts.current.has(postId)) return
+    commentingPosts.current.add(postId)
+    try {
+      const comment = await addCommentApi(postId, text)
+      setPosts((prev) => prev.map((p) => p.id === postId ? { ...p, comments: [...p.comments, comment] } : p))
+      setCommentInput((prev) => ({ ...prev, [postId]: '' }))
+    } catch (err) {
+      setNoticeMessage(err instanceof Error ? err.message : 'Unable to save comment')
+    } finally {
+      commentingPosts.current.delete(postId)
+    }
   }
 
   const filteredPosts = posts.filter((post) => {
@@ -332,61 +324,109 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
   })
 
   return (
-    <div className="w-full max-w-4xl mx-auto font-sans">
+    <div className="mx-auto w-full max-w-[760px] font-sans pb-12 pt-1 sm:pt-2">
       {noticeMessage && (
-        <div className="mb-4 p-3.5 bg-stone-900 text-white text-xs font-medium rounded-lg flex items-center justify-between shadow-xs">
+        <div className="mb-4 px-4 py-2.5 bg-[#141412] text-[#FAF7F2] border border-[#E8E2D8]/40 rounded-xl flex items-center justify-between text-xs font-semibold shadow-lg animate-in fade-in duration-150">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="w-2 h-2 rounded-full bg-[#D95D39] shrink-0" />
             <span>{noticeMessage}</span>
           </div>
           <button
             type="button"
             onClick={() => setNoticeMessage(null)}
-            className="text-stone-400 hover:text-white"
+            className="text-[#D4CBBF] hover:text-white"
           >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      <div className="mb-6 pb-5 border-b border-[#E5E0D5] flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+      {/* Community Section Header */}
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[#C84B31] block mb-1">
-            Reader Forum & Commentary
-          </span>
-          <h1 className="font-serif text-2xl sm:text-3xl lg:text-4xl font-medium text-[#171715] tracking-tight">
+          <div className="mb-1.5 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8B857A]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#D95D39]" /> Reader Forum & Commentary
+          </div>
+          <h1 className="font-serif text-[28px] sm:text-[32px] font-semibold leading-tight tracking-tight text-[#141412]">
             Community Dispatches
           </h1>
-          <p className="text-xs sm:text-sm text-[#5C5852] mt-1 font-sans">
+          <p className="mt-1 text-xs leading-relaxed text-[#78716C]">
             Independent reader perspectives, civic analyses, and verified commentary on today's reporting.
           </p>
         </div>
 
         <button
           type="button"
-          onClick={() => setIsComposerOpen(true)}
-          className="self-start sm:self-auto px-4 py-2 bg-[#171715] hover:bg-[#2C2B27] text-[#F5F1E8] rounded text-xs font-semibold tracking-wide transition-colors flex items-center gap-1.5 shadow-xs shrink-0"
+          onClick={() => {
+            if (!currentUser) {
+              onRequireLogin?.()
+              return
+            }
+            setIsComposerOpen(true)
+          }}
+          className="self-start sm:self-auto rounded-full bg-[#0F392B] hover:bg-[#184837] text-white px-4 py-2 text-xs font-semibold flex items-center gap-2 shadow-xs transition-colors shrink-0"
         >
-          <Plus className="w-4 h-4 stroke-[2] text-[#C84B31]" />
+          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
           <span>Write Dispatch</span>
         </button>
       </div>
 
+      {/* Quick Category Chips & Search Bar */}
+      <div className="mb-5 overflow-hidden rounded-2xl border border-[#E8E2D8] bg-white p-3 sm:p-3.5 shadow-xs">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 sm:flex-wrap" aria-label="Community categories">
+            {COMMUNITY_CATEGORIES.map((cat) => {
+              const active = selectedCategory === cat
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setSelectedCategory(cat)}
+                  aria-pressed={active}
+                  className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    active
+                      ? 'border-[#0F392B] bg-[#0F392B] text-white shadow-xs'
+                      : 'border-[#E8E2D8] text-[#78716C] hover:border-[#0F392B] hover:text-[#0F392B]'
+                  }`}
+                >
+                  {cat}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="relative shrink-0 w-full sm:w-52">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#78716C]" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search dispatches..."
+              className="w-full pl-8 pr-3 py-1 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-full text-[#141412] placeholder:text-[#78716C] focus:outline-none focus:border-[#0F392B] focus:bg-white transition-all"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Composer Form */}
       {isComposerOpen && (
-        <div className="mb-8 p-6 bg-white border border-stone-200/90 rounded-xl shadow-subtle animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-4 border-b border-stone-100 mb-5">
+        <div className="mb-6 p-5 sm:p-6 bg-white border border-[#E8E2D8] rounded-2xl shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-3.5 border-b border-[#F0ECE5] mb-4">
             <div>
-              <h2 className="font-sans text-xl font-bold text-stone-900">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#D95D39]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#D95D39]" /> Citizen Reporting Desk
+              </div>
+              <h2 className="font-serif text-xl font-bold text-[#141412] mt-0.5">
                 Compose Dispatch
               </h2>
-              <p className="text-xs text-stone-500 mt-0.5">
-                Publishing as <strong className="text-stone-700">{currentUser?.name || 'Reader Correspondent'}</strong>
+              <p className="text-xs text-[#78716C]">
+                Publishing as <strong className="text-[#141412] font-semibold">{currentUser?.name || 'Reader Correspondent'}</strong>
               </p>
             </div>
             <button
               type="button"
               onClick={handleCloseComposer}
-              className="p-1 rounded text-stone-400 hover:text-stone-700 transition-colors"
+              className="p-1.5 rounded-lg text-[#78716C] hover:text-[#141412] hover:bg-[#FAF7F2] transition-colors"
               aria-label="Close composer"
             >
               <X className="w-4 h-4" />
@@ -397,7 +437,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
             <div>
               <label
                 htmlFor="dispatch-title"
-                className="block text-[11px] uppercase tracking-wider font-medium text-stone-600 mb-1.5"
+                className="block text-[11px] uppercase tracking-wider font-semibold text-[#55504A] mb-1.5"
               >
                 Dispatch Headline
               </label>
@@ -412,22 +452,22 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                   }
                 }}
                 placeholder="e.g. Analysis: Regional power grid adaptations following solar expansion"
-                className={`w-full px-3.5 h-11 text-sm bg-[#FAF9F6] border rounded-lg text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:border-[#1C1917] focus:ring-1 focus:ring-[#1C1917] transition-all ${
-                  composerErrors.title ? 'border-red-500' : 'border-stone-300'
+                className={`w-full px-3.5 h-10 text-sm bg-[#FAF7F2] border rounded-xl text-[#141412] placeholder:text-[#78716C] focus:bg-white focus:outline-none focus:border-[#0F392B] focus:ring-1 focus:ring-[#0F392B] transition-all ${
+                  composerErrors.title ? 'border-[#B91C1C]' : 'border-[#E8E2D8]'
                 }`}
               />
               {composerErrors.title && (
-                <p className="mt-1 text-xs text-red-600 font-medium">
+                <p className="mt-1 text-xs text-[#B91C1C] font-medium">
                   {composerErrors.title}
                 </p>
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label
                   htmlFor="dispatch-category"
-                  className="block text-[11px] uppercase tracking-wider font-medium text-stone-600 mb-1.5"
+                  className="block text-[11px] uppercase tracking-wider font-semibold text-[#55504A] mb-1.5"
                 >
                   Topic Category
                 </label>
@@ -435,7 +475,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                   id="dispatch-category"
                   value={categoryInput}
                   onChange={(e) => setCategoryInput(e.target.value)}
-                  className="w-full px-3 h-11 text-sm bg-[#FAF9F6] border border-stone-300 rounded-lg text-stone-900 focus:bg-white focus:outline-none focus:border-[#1C1917] focus:ring-1 focus:ring-[#1C1917]"
+                  className="w-full px-3 h-10 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-xl text-[#141412] focus:bg-white focus:outline-none focus:border-[#0F392B]"
                 >
                   {COMMUNITY_CATEGORIES.filter((c) => c !== 'All Dispatches').map((cat) => (
                     <option key={cat} value={cat}>
@@ -448,7 +488,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
               <div>
                 <label
                   htmlFor="dispatch-city"
-                  className="block text-[11px] uppercase tracking-wider font-medium text-stone-600 mb-1.5"
+                  className="block text-[11px] uppercase tracking-wider font-semibold text-[#55504A] mb-1.5"
                 >
                   City or Campus
                 </label>
@@ -457,33 +497,38 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                   type="text"
                   value={cityInput}
                   onChange={(e) => setCityInput(e.target.value)}
-                  placeholder="e.g. New Delhi, Bengaluru, Chandigarh"
-                  className="w-full px-3.5 h-11 text-sm bg-[#FAF9F6] border border-stone-300 rounded-lg text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:border-[#1C1917] focus:ring-1 focus:ring-[#1C1917]"
+                  placeholder="e.g. New Delhi, Bengaluru"
+                  required
+                  minLength={2}
+                  className="w-full px-3.5 h-10 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-xl text-[#141412] placeholder:text-[#78716C] focus:bg-white focus:outline-none focus:border-[#0F392B]"
                 />
+                {composerErrors.city && <p className="mt-1 text-xs text-[#B91C1C]">{composerErrors.city}</p>}
               </div>
 
               <div>
                 <label
                   htmlFor="dispatch-source"
-                  className="block text-[11px] uppercase tracking-wider font-medium text-stone-600 mb-1.5"
+                  className="block text-[11px] uppercase tracking-wider font-semibold text-[#55504A] mb-1.5"
                 >
-                  Source Link (Optional)
+                  Source Link
                 </label>
                 <input
                   id="dispatch-source"
                   type="url"
                   value={sourceLinkInput}
                   onChange={(e) => setSourceLinkInput(e.target.value)}
-                  placeholder="https://example.com/reporting"
-                  className="w-full px-3.5 h-11 text-sm bg-[#FAF9F6] border border-stone-300 rounded-lg text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:border-[#1C1917] focus:ring-1 focus:ring-[#1C1917]"
+                  placeholder="https://example.com/source"
+                  required
+                  className="w-full px-3.5 h-10 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-xl text-[#141412] placeholder:text-[#78716C] focus:bg-white focus:outline-none focus:border-[#0F392B]"
                 />
+                {composerErrors.source && <p className="mt-1 text-xs text-[#B91C1C]">{composerErrors.source}</p>}
               </div>
             </div>
 
             <div>
               <label
                 htmlFor="dispatch-body"
-                className="block text-[11px] uppercase tracking-wider font-medium text-stone-600 mb-1.5"
+                className="block text-[11px] uppercase tracking-wider font-semibold text-[#55504A] mb-1.5"
               >
                 Dispatch Body & Commentary
               </label>
@@ -498,19 +543,19 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                   }
                 }}
                 placeholder="Share your structured analysis, relevant context, or firsthand insights on this issue..."
-                className={`w-full p-3.5 text-sm bg-[#FAF9F6] border rounded-lg text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:border-[#1C1917] focus:ring-1 focus:ring-[#1C1917] transition-all ${
-                  composerErrors.content ? 'border-red-500' : 'border-stone-300'
+                className={`w-full p-3.5 text-sm bg-[#FAF7F2] border rounded-xl text-[#141412] placeholder:text-[#78716C] focus:bg-white focus:outline-none focus:border-[#0F392B] focus:ring-1 focus:ring-[#0F392B] transition-all ${
+                  composerErrors.content ? 'border-[#B91C1C]' : 'border-[#E8E2D8]'
                 }`}
               />
               {composerErrors.content && (
-                <p className="mt-1 text-xs text-red-600 font-medium">
+                <p className="mt-1 text-xs text-[#B91C1C] font-medium">
                   {composerErrors.content}
                 </p>
               )}
             </div>
 
             {/* Editorial Standards Disclaimer */}
-            <div className="p-3 bg-[#FAF7F2] border border-[#E8E2D8] rounded-lg">
+            <div className="p-3 bg-[#FAF7F2] border border-[#E8E2D8] rounded-xl">
               <label className="flex items-start gap-2.5 cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -521,32 +566,32 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                       setComposerErrors((prev) => ({ ...prev, disclaimer: undefined }))
                     }
                   }}
-                  className="mt-0.5 rounded border-stone-300 text-[#0F392B] focus:ring-[#0F392B]"
+                  className="mt-0.5 rounded border-[#E8E2D8] text-[#0F392B] focus:ring-[#0F392B]"
                 />
                 <span className="text-xs text-[#55504A] leading-relaxed">
                   I confirm this submission reflects firsthand observation or verifiable source evidence. I agree to Upwise Hub Community Standards.
                 </span>
               </label>
               {composerErrors.disclaimer && (
-                <p className="mt-1.5 text-xs text-red-600 font-medium">
+                <p className="mt-1.5 text-xs text-[#B91C1C] font-medium">
                   {composerErrors.disclaimer}
                 </p>
               )}
             </div>
 
-            <div className="pt-2 flex items-center justify-end gap-3">
+            <div className="pt-2 flex items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={handleCloseComposer}
                 disabled={isSubmittingPost}
-                className="px-4 py-2 text-xs font-medium text-stone-600 hover:text-stone-900 transition-colors"
+                className="px-4 py-2 rounded-full border border-[#E8E2D8] bg-white text-xs font-semibold text-[#55504A] hover:text-[#141412] hover:bg-[#FAF7F2] transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmittingPost}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#1C1917] hover:bg-stone-800 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors shadow-xs"
+                className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-[#0F392B] hover:bg-[#184837] disabled:opacity-50 text-white text-xs font-semibold transition-colors shadow-xs"
               >
                 {isSubmittingPost && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 <span>{isSubmittingPost ? 'Submitting...' : 'Publish Dispatch'}</span>
@@ -556,54 +601,34 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {COMMUNITY_CATEGORIES.map((cat) => (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1.5 rounded text-xs transition-colors ${
-                selectedCategory === cat
-                  ? 'bg-[#171715] text-[#F5F1E8] font-semibold shadow-xs'
-                  : 'bg-white border border-[#E5E0D5] text-[#5C5852] hover:text-[#171715] hover:bg-[#FAF8F3]'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-
-        <input
-          type="search"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Filter dispatches..."
-          className="px-3 py-1.5 text-xs bg-white border border-[#E5E0D5] rounded text-[#171715] placeholder:text-[#78716C] focus:outline-none focus:border-[#171715] w-full sm:w-48"
-        />
-      </div>
-
+      {/* Dispatches Feed */}
       {filteredPosts.length === 0 ? (
-        <div className="py-16 text-center bg-white border border-[#E5E0D5] rounded p-8">
-          <div className="w-12 h-12 rounded-full bg-[#FAF8F3] border border-[#E5E0D5] flex items-center justify-center mx-auto mb-3 text-[#78716C]">
+        <div className="py-14 text-center bg-white border border-[#E8E2D8] rounded-2xl p-8 shadow-xs">
+          <div className="w-12 h-12 rounded-full bg-[#EDF3EF] flex items-center justify-center mx-auto mb-3 text-[#0F392B]">
             <Filter className="w-5 h-5 stroke-[1.5]" />
           </div>
-          <h3 className="font-serif font-medium text-2xl text-[#171715] mb-1">
+          <h3 className="font-serif font-semibold text-2xl text-[#141412] mb-1">
             No community dispatches found
           </h3>
-          <p className="text-xs text-[#5C5852] max-w-sm mx-auto mb-5">
+          <p className="text-xs text-[#78716C] max-w-sm mx-auto mb-5 leading-relaxed">
             Be the first reader to publish commentary in this category.
           </p>
           <button
             type="button"
-            onClick={() => setIsComposerOpen(true)}
-            className="px-4 py-2 bg-[#171715] hover:bg-[#2C2B27] text-[#F5F1E8] text-xs font-semibold rounded transition-colors"
+            onClick={() => {
+              if (!currentUser) {
+                onRequireLogin?.()
+                return
+              }
+              setIsComposerOpen(true)
+            }}
+            className="rounded-full bg-[#0F392B] hover:bg-[#184837] text-white px-5 py-2 text-xs font-semibold shadow-xs transition-colors"
           >
             Start a Dispatch
           </button>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-4">
           {filteredPosts.map((post) => {
             const hasUpvoted = votedPostIds.includes(post.id)
             const isSaved = savedPostIds.includes(post.id)
@@ -612,90 +637,105 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
             return (
               <article
                 key={post.id}
-                className="bg-white border border-[#E5E0D5] rounded p-5 sm:p-6 shadow-xs transition-all hover:border-[#D4CDBF]"
+                className="overflow-hidden rounded-2xl border border-[#E8E2D8] bg-white shadow-xs transition-all hover:border-[#D4CDBF]"
               >
-                <div className="flex items-center justify-between text-xs text-[#78716C] mb-2.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="w-6 h-6 rounded bg-[#FAF8F3] border border-[#E5E0D5] text-[#171715] font-semibold text-[10px] flex items-center justify-center font-mono">
-                      {post.authorInitials}
-                    </span>
-                    <span className="font-semibold text-[#171715]">
+                <div className="px-5 py-4 sm:px-6 sm:py-5">
+                  {/* Category & Metadata Eyebrow */}
+                  <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold tracking-wide">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#D95D39] shrink-0" />
+                      <span className="text-[#A7492F] uppercase">{post.category}</span>
+                      {post.verificationLevel === 'verified' ? (
+                        <>
+                          <span className="text-[#D4CBBF]" aria-hidden="true">/</span>
+                          <span className="inline-flex items-center gap-1 text-[#0F392B] font-semibold">
+                            <CheckCircle2 className="w-3 h-3 stroke-[2]" />
+                            Verified Dispatch
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-[#D4CBBF]" aria-hidden="true">/</span>
+                          <span className="text-[#78716C]">Community Submission</span>
+                        </>
+                      )}
+                      {post.city && (
+                        <>
+                          <span className="text-[#D4CBBF]" aria-hidden="true">•</span>
+                          <span className="text-[#78716C] flex items-center gap-0.5">
+                            <MapPin className="w-3 h-3 shrink-0 text-[#78716C]" />
+                            {post.city}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSavePost(post.id)}
+                      aria-label={isSaved ? 'Remove bookmark' : 'Bookmark dispatch'}
+                      title={isSaved ? 'Dispatch saved' : 'Save dispatch'}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        isSaved ? 'text-[#0F392B] bg-[#EDF3EF]' : 'text-[#78716C] hover:text-[#141412] hover:bg-[#FAF7F2]'
+                      }`}
+                    >
+                      <Bookmark className={`w-4 h-4 stroke-[1.75] ${isSaved ? 'fill-current' : ''}`} />
+                    </button>
+                  </div>
+
+                  {/* Headline */}
+                  <h2 className="font-serif text-[20px] sm:text-[22px] font-semibold leading-[1.25] tracking-tight text-[#141412] hover:text-[#0F392B] transition-colors mb-2.5">
+                    {post.title}
+                  </h2>
+
+                  {/* Author & Timestamp */}
+                  <div className="mb-3.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[#78716C]">
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-[#55504A]">
+                      <div className="w-5 h-5 rounded-full bg-[#0F392B] text-white flex items-center justify-center font-bold text-[9px] shadow-xs">
+                        {post.authorInitials || post.authorName.charAt(0)}
+                      </div>
                       {post.authorName}
                     </span>
-                    <span className="text-[#D4CDBF]">•</span>
-                    <span className="text-[#C84B31] font-semibold">
-                      {post.category}
-                    </span>
-                    <span className="text-[#D4CDBF]">•</span>
-                    <span className="text-[#78716C]">{post.createdAt}</span>
+                    <span className="text-[#D4CBBF]">•</span>
+                    <span>{post.createdAt}</span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleToggleSavePost(post.id)}
-                    aria-label={isSaved ? 'Remove bookmark' : 'Bookmark dispatch'}
-                    className={`p-1.5 rounded transition-colors ${
-                      isSaved ? 'text-[#C84B31] bg-[#FBF2EF]' : 'text-[#78716C] hover:text-[#171715]'
-                    }`}
-                  >
-                    <Bookmark className={`w-4 h-4 stroke-[1.75] ${isSaved ? 'fill-current' : ''}`} />
-                  </button>
-                </div>
+                  {/* Content */}
+                  <p className="text-[13px] leading-[1.8] text-[#625D55] sm:text-sm whitespace-pre-line font-sans">
+                    {post.content}
+                  </p>
 
-                {/* Verification & Location Strip */}
-                <div className="flex flex-wrap items-center gap-2 mb-3">
-                  {post.verificationLevel === 'verified' ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-[#0F392B]/10 text-[#0F392B] border border-[#0F392B]/20">
-                      <CheckCircle2 className="w-3 h-3 stroke-[2]" />
-                      <span>Verified by Editorial Staff</span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-[#78716C]/10 text-[#78716C] border border-[#E8E2D8]">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#D95D39]" />
-                      <span>Community Submission (Unverified)</span>
-                    </span>
-                  )}
-                  {post.city && (
-                    <span className="text-[10px] text-[#78716C] font-medium">
-                      📍 {post.city}
-                    </span>
+                  {/* Source Link */}
+                  {post.sourceLink && (
+                    <div className="mt-3.5">
+                      <a
+                        href={post.sourceLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-[#FAF7F2] text-[#0F392B] hover:underline border border-[#E8E2D8] max-w-full"
+                      >
+                        <ExternalLink className="w-3 h-3 shrink-0" />
+                        <span className="truncate">Source Reference: {post.sourceLink}</span>
+                      </a>
+                    </div>
                   )}
                 </div>
 
-                <h2 className="font-serif font-medium text-xl sm:text-2xl text-[#171715] tracking-[-0.015em] leading-snug mb-3">
-                  {post.title}
-                </h2>
-
-                <p className="text-sm text-stone-700 leading-relaxed mb-4 whitespace-pre-line font-sans">
-                  {post.content}
-                </p>
-
-                {post.sourceLink && (
-                  <div className="mb-4">
-                    <a
-                      href={post.sourceLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs text-stone-500 hover:text-stone-900 transition-colors bg-stone-50 border border-stone-200/80 px-2.5 py-1 rounded"
-                    >
-                      <ExternalLink className="w-3 h-3 text-stone-400" />
-                      <span className="truncate max-w-xs">{post.sourceLink}</span>
-                    </a>
-                  </div>
-                )}
-
-                <div className="pt-3 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
+                {/* Action Bar */}
+                <div className="px-5 py-2.5 sm:px-6 border-t border-[#F0ECE5] flex items-center justify-between text-xs text-[#78716C]">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleToggleUpvote(post.id)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all ${
+                      disabled={pendingVotes.includes(post.id)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
                         hasUpvoted
-                          ? 'bg-stone-900 border-stone-900 text-white font-medium'
-                          : 'bg-white border-stone-200 text-stone-600 hover:text-stone-900 hover:bg-stone-50'
+                          ? 'bg-[#FBF2EF] border-[#F3D5CC] text-[#D95D39]'
+                          : 'bg-white border-[#E8E2D8] text-[#68645D] hover:text-[#141412] hover:bg-[#FAF7F2]'
                       }`}
+                      title={hasUpvoted ? 'Remove upvote' : 'Upvote dispatch'}
                     >
-                      <ThumbsUp className="w-3.5 h-3.5 stroke-[1.75]" />
+                      <ThumbsUp className={`w-3.5 h-3.5 stroke-[1.75] ${hasUpvoted ? 'fill-current text-[#D95D39]' : ''}`} />
                       <span>{post.upvotes}</span>
                       <span className="hidden sm:inline">Upvotes</span>
                     </button>
@@ -705,7 +745,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                       onClick={() =>
                         setActiveCommentPostId(isCommentsExpanded ? null : post.id)
                       }
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E8E2D8] bg-white text-[#68645D] hover:text-[#0F392B] hover:bg-[#FAF7F2] transition-colors text-xs font-medium"
                     >
                       <MessageSquare className="w-3.5 h-3.5 stroke-[1.75]" />
                       <span>{post.comments.length}</span>
@@ -717,10 +757,10 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                     <button
                       type="button"
                       onClick={() => handleOpenReport(post.id)}
-                      className="p-1.5 rounded text-stone-400 hover:text-[#B91C1C] transition-colors"
-                      title="Flag or report dispatch"
+                      className="p-1.5 rounded-lg text-[#78716C] hover:text-[#D95D39] hover:bg-[#FAF7F2] transition-colors"
+                      title="Report dispatch"
                     >
-                      <Flag className="w-4 h-4 stroke-[1.75]" />
+                      <Flag className="w-3.5 h-3.5 stroke-[1.75]" />
                     </button>
                     <button
                       type="button"
@@ -731,17 +771,17 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                           setTimeout(() => setNoticeMessage(null), 2500)
                         }
                       }}
-                      className="p-1.5 rounded text-stone-400 hover:text-stone-700 transition-colors"
-                      title="Share dispatch link"
+                      className="p-1.5 rounded-lg text-[#78716C] hover:text-[#141412] hover:bg-[#FAF7F2] transition-colors"
+                      title="Share dispatch"
                     >
-                      <Share2 className="w-4 h-4 stroke-[1.75]" />
+                      <Share2 className="w-3.5 h-3.5 stroke-[1.75]" />
                     </button>
                   </div>
                 </div>
 
-                {/* Reviewer Moderation Controls (Authorized Reviewer/Admin only) */}
+                {/* Reviewer Moderation Controls */}
                 {isReviewer && (
-                  <div className="mt-3.5 pt-2.5 border-t border-[#E8E2D8] flex flex-wrap items-center justify-between gap-2 bg-[#FAF7F2] p-2.5 rounded-lg text-xs">
+                  <div className="px-5 py-2.5 sm:px-6 bg-[#FAF7F2] border-t border-[#E8E2D8] flex flex-wrap items-center justify-between gap-2 text-xs">
                     <div className="flex items-center gap-1.5 text-[#0F392B] font-semibold text-[11px]">
                       <ShieldCheck className="w-3.5 h-3.5 stroke-[2]" />
                       <span>Reviewer Controls:</span>
@@ -750,21 +790,21 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                       <button
                         onClick={() => handleModerate(post.id, 'approved', 'verified')}
                         type="button"
-                        className="px-2.5 py-1 rounded bg-[#0F392B] text-white text-[11px] font-semibold hover:bg-[#184837] transition-colors"
+                        className="px-2.5 py-1 rounded-full bg-[#0F392B] text-white text-[11px] font-semibold hover:bg-[#184837] transition-colors"
                       >
                         Mark Verified
                       </button>
                       <button
                         onClick={() => handleModerate(post.id, 'approved', 'unverified')}
                         type="button"
-                        className="px-2.5 py-1 rounded bg-stone-200 text-stone-800 text-[11px] font-semibold hover:bg-stone-300 transition-colors"
+                        className="px-2.5 py-1 rounded-full bg-white border border-[#E8E2D8] text-[#55504A] text-[11px] font-semibold hover:bg-[#FAF7F2] transition-colors"
                       >
                         Approve Unverified
                       </button>
                       <button
                         onClick={() => handleModerate(post.id, 'rejected')}
                         type="button"
-                        className="px-2.5 py-1 rounded bg-[#B91C1C] text-white text-[11px] font-semibold hover:bg-[#991B1B] transition-colors"
+                        className="px-2.5 py-1 rounded-full bg-[#D95D39] text-white text-[11px] font-semibold hover:bg-[#C2410C] transition-colors"
                       >
                         Reject
                       </button>
@@ -772,33 +812,34 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                   </div>
                 )}
 
+                {/* Expanded Discussion / Comments */}
                 {isCommentsExpanded && (
-                  <div className="mt-4 pt-4 border-t border-stone-100 space-y-3 animate-in fade-in duration-150">
-                    <div className="text-xs font-semibold text-stone-700 uppercase tracking-wider mb-2">
+                  <div className="px-5 py-4 sm:px-6 bg-[#FAF7F2] border-t border-[#E8E2D8] space-y-3 animate-in fade-in duration-150">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#55504A] mb-2">
                       Discussion ({post.comments.length})
                     </div>
 
                     {post.comments.length === 0 ? (
-                      <p className="text-xs text-stone-400 italic py-1">
-                        No responses yet. Share your thoughts below.
+                      <p className="text-xs text-[#78716C] italic py-1">
+                        No responses yet. Share your constructive perspective below.
                       </p>
                     ) : (
-                      <div className="space-y-2.5">
+                      <div className="space-y-2">
                         {post.comments.map((comment) => (
                           <div
                             key={comment.id}
-                            className="bg-stone-50/80 border border-stone-200/70 p-3 rounded-lg text-xs"
+                            className="bg-white border border-[#E8E2D8] p-3 rounded-xl text-xs shadow-2xs"
                           >
-                            <div className="flex items-center justify-between text-stone-500 mb-1">
-                              <span className="font-semibold text-stone-800 flex items-center gap-1.5">
-                                <span className="w-4 h-4 rounded-full bg-stone-200 text-[9px] flex items-center justify-center font-mono">
-                                  {comment.authorInitials}
-                                </span>
+                            <div className="flex items-center justify-between text-[#78716C] mb-1">
+                              <span className="font-semibold text-[#141412] flex items-center gap-1.5">
+                                <div className="w-4 h-4 rounded-full bg-[#0F392B] text-white text-[8px] flex items-center justify-center font-bold">
+                                  {comment.authorInitials || comment.authorName.charAt(0)}
+                                </div>
                                 {comment.authorName}
                               </span>
-                              <span className="text-[10px] text-stone-400">{comment.createdAt}</span>
+                              <span className="text-[10px] text-[#78716C]">{comment.createdAt}</span>
                             </div>
-                            <p className="text-stone-700 leading-relaxed whitespace-pre-line pl-5">
+                            <p className="text-[#55504A] leading-relaxed whitespace-pre-line pl-5 font-sans">
                               {comment.content}
                             </p>
                           </div>
@@ -820,12 +861,12 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                           }))
                         }
                         placeholder="Add your constructive perspective..."
-                        className="flex-1 px-3 py-2 text-xs bg-stone-50 border border-stone-300 rounded-lg text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:border-stone-800"
+                        className="flex-1 px-3.5 py-2 text-xs bg-white border border-[#E8E2D8] rounded-xl text-[#141412] placeholder:text-[#78716C] focus:bg-white focus:outline-none focus:border-[#0F392B]"
                       />
                       <button
                         type="submit"
                         disabled={!commentInput[post.id]?.trim()}
-                        className="px-3.5 py-2 bg-[#1C1917] hover:bg-stone-800 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="px-4 py-2 bg-[#0F392B] hover:bg-[#184837] text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
                       >
                         <Send className="w-3 h-3" />
                         <span>Reply</span>
@@ -839,7 +880,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
         </div>
       )}
 
-      <div className="mt-8 text-center text-[11px] text-stone-400 border-t border-stone-200/70 pt-4">
+      <div className="mt-8 text-center text-[11px] text-[#78716C] border-t border-[#E8E2D8] pt-4">
         Upwise Hub Community Dispatches • Verified citizen journalism and student commentary.
       </div>
 
@@ -847,13 +888,13 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
       {reportingPostId && (
         <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4" role="dialog" aria-modal="true">
           <div
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity"
+            className="fixed inset-0 bg-[#141412]/50 backdrop-blur-xs transition-opacity"
             onClick={() => setReportingPostId(null)}
           />
-          <div className="relative w-full max-w-md bg-white border border-[#E5E0D5] rounded-xl shadow-2xl p-6 z-50 font-sans animate-in fade-in zoom-in-95 duration-150">
+          <div className="relative w-full max-w-md bg-white border border-[#E8E2D8] rounded-2xl shadow-2xl p-6 z-50 font-sans animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#E8E2D8]">
               <div className="flex items-center gap-2">
-                <Flag className="w-4 h-4 text-[#B91C1C]" />
+                <Flag className="w-4 h-4 text-[#D95D39]" />
                 <h3 className="font-serif font-bold text-base text-[#141412]">
                   Report Community Dispatch
                 </h3>
@@ -861,7 +902,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
               <button
                 type="button"
                 onClick={() => setReportingPostId(null)}
-                className="p-1 rounded text-[#78716C] hover:text-[#141412]"
+                className="p-1.5 rounded-lg text-[#78716C] hover:text-[#141412] hover:bg-[#FAF7F2]"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -875,7 +916,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                 <select
                   value={reportReason}
                   onChange={(e) => setReportReason(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-lg text-[#141412] focus:outline-none focus:border-[#0F392B]"
+                  className="w-full px-3 py-2 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-xl text-[#141412] focus:outline-none focus:border-[#0F392B]"
                 >
                   <option value="Factually Inaccurate / Misleading Claims">Factually Inaccurate / Misleading Claims</option>
                   <option value="Plagiarism / Unattributed Source">Plagiarism / Unattributed Source</option>
@@ -894,7 +935,7 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                   value={reportDetails}
                   onChange={(e) => setReportDetails(e.target.value)}
                   placeholder="Provide context or links demonstrating the inaccuracy..."
-                  className="w-full p-2.5 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-lg text-[#141412] focus:outline-none focus:border-[#0F392B]"
+                  className="w-full p-2.5 text-xs bg-[#FAF7F2] border border-[#E8E2D8] rounded-xl text-[#141412] focus:outline-none focus:border-[#0F392B]"
                 />
               </div>
 
@@ -903,14 +944,14 @@ export const CommunityHub: React.FC<CommunityHubProps> = ({
                   type="button"
                   onClick={() => setReportingPostId(null)}
                   disabled={isSubmittingReport}
-                  className="px-3.5 py-2 text-xs font-medium text-stone-600 hover:text-stone-900"
+                  className="px-4 py-2 text-xs font-semibold rounded-full border border-[#E8E2D8] bg-white text-[#55504A] hover:text-[#141412] hover:bg-[#FAF7F2]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmittingReport}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#B91C1C] hover:bg-[#991B1B] text-white text-xs font-semibold rounded-lg shadow-xs"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#D95D39] hover:bg-[#C2410C] text-white text-xs font-semibold rounded-full shadow-xs"
                 >
                   {isSubmittingReport && <Loader2 className="w-3 h-3 animate-spin" />}
                   <span>Submit Report</span>

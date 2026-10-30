@@ -1,3 +1,5 @@
+import type { LanguageCode } from '../config/languages'
+
 export interface ArticleAuthor {
   name: string
   role?: string
@@ -67,7 +69,7 @@ export interface Article {
 }
 
 export type LayoutMode = 'stack' | 'grid'
-export type LanguageMode = 'en' | 'hi'
+export type LanguageMode = LanguageCode
 export type DatePreset = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom'
 
 export interface NewsFilters {

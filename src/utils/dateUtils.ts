@@ -21,103 +21,49 @@ export function formatPublicationDate(dateInput: string | Date | undefined | nul
   }
 }
 
-/**
- * Checks whether an article's published timestamp matches the selected date preset
- * Respects Asia/Kolkata timezone and handles month, week, midnight, and year transitions.
- */
+/** Return an India calendar date, preserving explicit date-only values. */
+function calendarDate(value: string | Date): string | null {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const parsed = new Date(`${value}T00:00:00Z`)
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : null
+  }
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const part = (type: string) => parts.find((entry) => entry.type === type)!.value
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
+
+/** Filter by India calendar days. Week and month mean the past 7 and 30 days. */
 export function matchDatePreset(
   publishedDateInput: string | Date | undefined | null,
   preset: DatePreset,
   customStart?: string,
-  customEnd?: string
+  customEnd?: string,
+  referenceDate: Date = new Date()
 ): boolean {
   if (preset === 'all') return true
   if (!publishedDateInput) return false
-
-  let articleDate: Date
-  let articleDateYMD = ''
-
-  if (typeof publishedDateInput === 'string') {
-    // Check if format is YYYY-MM-DD
-    const isoMatch = publishedDateInput.match(/^(\d{4})-(\d{2})-(\d{2})/)
-    if (isoMatch) {
-      articleDateYMD = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`
-      articleDate = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]))
-    } else {
-      articleDate = new Date(publishedDateInput)
-    }
-  } else {
-    articleDate = publishedDateInput
-  }
-
-  if (isNaN(articleDate.getTime())) return false
-
-  if (!articleDateYMD) {
-    const y = articleDate.getFullYear()
-    const m = String(articleDate.getMonth() + 1).padStart(2, '0')
-    const d = String(articleDate.getDate()).padStart(2, '0')
-    articleDateYMD = `${y}-${m}-${d}`
-  }
-
-  const now = new Date()
-  const todayYMD = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-
-  const yesterdayDate = new Date(now)
-  yesterdayDate.setDate(now.getDate() - 1)
-  const yesterdayYMD = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`
-
-  // Reference dates for 2026 dataset consistency
-  const REFERENCE_TODAY = '2026-10-29'
-  const REFERENCE_YESTERDAY = '2026-10-28'
+  const article = calendarDate(publishedDateInput)
+  const today = calendarDate(referenceDate)
+  if (!article || !today) return false
+  const day = (value: string) => Date.parse(`${value}T00:00:00Z`) / 86400000
+  const age = day(today) - day(article)
 
   switch (preset) {
-    case 'today':
-      return articleDateYMD === todayYMD || articleDateYMD === REFERENCE_TODAY
-
-    case 'yesterday':
-      return articleDateYMD === yesterdayYMD || articleDateYMD === REFERENCE_YESTERDAY
-
-    case 'week': {
-      // Past 7 days
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      sevenDaysAgo.setHours(0, 0, 0, 0)
-      const isDynamicWeek = articleDate >= sevenDaysAgo && articleDate <= now
-
-      // Also support 2026-10-22 to 2026-10-29 reference period
-      const refWeekStart = '2026-10-22'
-      const refWeekEnd = '2026-10-29'
-      const isRefWeek = articleDateYMD >= refWeekStart && articleDateYMD <= refWeekEnd
-
-      return isDynamicWeek || isRefWeek
-    }
-
-    case 'month': {
-      // Past 30 days or current calendar month
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-      thirtyDaysAgo.setHours(0, 0, 0, 0)
-      const isDynamicMonth = articleDate >= thirtyDaysAgo && articleDate <= now
-
-      // Also support October 2026 reference period
-      const isRefMonth = articleDateYMD >= '2026-10-01' && articleDateYMD <= '2026-10-31'
-
-      return isDynamicMonth || isRefMonth
-    }
-
+    case 'today': return age === 0
+    case 'yesterday': return age === 1
+    case 'week': return age >= 0 && age < 7
+    case 'month': return age >= 0 && age < 30
     case 'custom': {
-      if (!customStart && !customEnd) return true
-      if (customStart && customEnd) {
-        return articleDateYMD >= customStart && articleDateYMD <= customEnd
-      }
-      if (customStart) {
-        return articleDateYMD >= customStart
-      }
-      if (customEnd) {
-        return articleDateYMD <= customEnd
-      }
-      return true
+      const start = customStart ? calendarDate(customStart) : null
+      const end = customEnd ? calendarDate(customEnd) : null
+      if ((customStart && !start) || (customEnd && !end)) return false
+      if (start && end && start > end) return false
+      return (!start || article >= start) && (!end || article <= end)
     }
-
-    default:
-      return true
+    default: return true
   }
 }

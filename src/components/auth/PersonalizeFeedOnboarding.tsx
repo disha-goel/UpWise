@@ -1,3 +1,4 @@
+import { LanguageSelector } from '../layout/LanguageSelector'
 import React, { useState } from 'react'
 import {
   Cpu,
@@ -12,7 +13,6 @@ import {
   Check,
   ArrowRight,
   AlertCircle,
-  Languages,
 } from 'lucide-react'
 import { UpwiseLogo } from '../layout/UpwiseLogo'
 import { LanguageMode } from '../../types/news'
@@ -177,34 +177,9 @@ export const PersonalizeFeedOnboarding: React.FC<PersonalizeFeedOnboardingProps>
             Choose the sections and language edition that define your daily newspaper feed.
           </p>
 
-          {/* Language Selector */}
-          <div className="mt-5 inline-flex items-center gap-2 p-1 bg-white border border-[#E8E2D8] rounded-lg shadow-xs">
-            <span className="px-2 text-xs font-semibold text-[#78716C] flex items-center gap-1.5">
-              <Languages className="w-3.5 h-3.5 text-[#0F392B]" />
-              Edition:
-            </span>
-            <button
-              type="button"
-              onClick={() => setSelectedLanguage('en')}
-              className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                selectedLanguage === 'en'
-                  ? 'bg-[#0F392B] text-white shadow-xs'
-                  : 'text-[#55504A] hover:text-[#141412]'
-              }`}
-            >
-              English
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedLanguage('hi')}
-              className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                selectedLanguage === 'hi'
-                  ? 'bg-[#0F392B] text-white shadow-xs'
-                  : 'text-[#55504A] hover:text-[#141412]'
-              }`}
-            >
-              हिंदी (Hindi)
-            </button>
+          <div className="mt-5 flex items-center gap-3">
+            <span className="text-xs font-semibold text-[#78716C]">Reading language</span>
+            <LanguageSelector language={selectedLanguage} onChange={setSelectedLanguage} label="Preferred reading language" compactOnMobile={false} />
           </div>
 
           <div className="mt-4 flex items-center justify-center gap-3 text-xs text-[#78716C]">

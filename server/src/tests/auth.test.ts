@@ -343,8 +343,9 @@ test('HTTP API: End-to-end Authentication Suite', async (t) => {
 
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
-    assert.equal(res.body.verdict, 'supported');
-    assert.ok(res.body.evidence.supporting.length > 0);
+    assert.equal(res.body.verdict, 'inconclusive');
+    assert.equal(res.body.evidence.supporting.length, 0);
+    assert.ok(res.body.evidence.inconclusive.length > 0);
     assert.ok(res.body.aiInterpretation);
     assert.ok(res.body.sources.length > 0);
   });

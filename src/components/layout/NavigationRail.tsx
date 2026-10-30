@@ -21,7 +21,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   const destinations = [
     {
       id: 'feed' as NavDestination,
-      label: 'Front Page',
+      label: 'News Feed',
       icon: Newspaper,
       isActive: activeDestination === 'feed',
       onClick: () => {
@@ -56,10 +56,11 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   ]
 
   return (
-    <nav
-      aria-label="Publication Destination Navigation"
-      className={`w-14 lg:w-40 xl:w-44 shrink-0 sticky top-4 h-fit border-r border-[#E8E2D8] pr-2 lg:pr-3 xl:pr-4 hidden md:flex flex-col justify-between select-none pt-0 pb-2 font-sans ${className}`}
-    >
+    <aside className={`hidden h-fit w-14 shrink-0 md:block lg:w-40 xl:w-44 sticky top-20 z-30 ${className}`}>
+      <nav
+        aria-label="Publication Destination Navigation"
+        className="w-full h-fit border-r border-[#E8E2D8] pr-2 lg:pr-3 xl:pr-4 flex flex-col justify-between select-none pt-0 pb-2 font-sans"
+      >
       <div className="space-y-1">
         {destinations.map((dest) => {
           const Icon = dest.icon
@@ -72,7 +73,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
               onClick={dest.onClick}
               aria-current={active ? 'page' : undefined}
               title={dest.label}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition-colors ${
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors ${
                 active
                   ? 'text-white font-semibold bg-[#0F392B]'
                   : 'text-[#55504A] hover:text-[#141412] hover:bg-[#FAF7F2] font-medium'
@@ -88,6 +89,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
           )
         })}
 
+        {activeDestination === 'community' && (
         <div className="pt-2.5 mt-2.5 border-t border-[#E8E2D8]">
           <button
             type="button"
@@ -99,7 +101,9 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
             <span className="hidden lg:inline text-xs">New Post</span>
           </button>
         </div>
+        )}
       </div>
     </nav>
+    </aside>
   )
 }

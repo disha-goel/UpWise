@@ -52,7 +52,7 @@ export const AccountMenu: React.FC<AccountMenuProps> = ({
           aria-label="Sign in"
         >
           <User className="w-3.5 h-3.5 stroke-[2]" />
-          <span>Sign In</span>
+          <span className="hidden sm:inline">Sign In</span>
         </button>
       </div>
     )

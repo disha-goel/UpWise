@@ -48,6 +48,8 @@ export function setAuthToken(token: string | null): void {
   }
 }
 
+let transientGuestSession: string | undefined
+
 export function getGuestSessionId(): string {
   try {
     let id = localStorage.getItem(STORAGE_KEYS.GUEST_SESSION)
@@ -57,7 +59,8 @@ export function getGuestSessionId(): string {
     }
     return id
   } catch {
-    return 'guest_fallback_id'
+    transientGuestSession ||= `guest_${globalThis.crypto.randomUUID()}`
+    return transientGuestSession
   }
 }
 
@@ -111,8 +114,8 @@ export function mapBackendArticleToFrontend(item: any): Article {
   // Format published date
   const pubDateStr = item.publishedAt
     ? typeof item.publishedAt === 'string'
-      ? item.publishedAt.slice(0, 10)
-      : new Date(item.publishedAt).toISOString().slice(0, 10)
+      ? item.publishedAt
+      : new Date(item.publishedAt).toISOString()
     : new Date().toISOString().slice(0, 10)
 
   // Map real cluster data if present and verified across >1 sources
@@ -245,7 +248,7 @@ export async function fetchArticlesFromBackend(
 
       if (res.ok) {
         const json = await res.json()
-        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        if (json.success && Array.isArray(json.data)) {
           const mappedArticles = json.data.map(mapBackendArticleToFrontend)
           return {
             articles: mappedArticles,
@@ -380,7 +383,7 @@ export async function fetchArticlesByLocation(
       const res = await fetch(`/api/articles?q=${encodeURIComponent(location.name)}&limit=20`)
       if (res.ok) {
         const json = await res.json()
-        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        if (json.success && Array.isArray(json.data)) {
           const backendMapped = json.data.map(mapBackendArticleToFrontend)
           const existingIds = new Set(pool.map((a) => a.id))
           for (const item of backendMapped) {
@@ -552,7 +555,7 @@ export async function fetchMapArticles(
 
       if (res.ok) {
         const json = await res.json()
-        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        if (json.success && Array.isArray(json.data)) {
           const mappedArticles = json.data.map(mapBackendArticleToFrontend)
           return {
             articles: mappedArticles,
@@ -767,16 +770,6 @@ export async function loginApi(credentials: {
     ) {
       throw err
     }
-    // Headless test or offline fallback
-    if (typeof window === 'undefined' || process.env.NODE_ENV === 'test') {
-      const simulatedUser: UserProfile = {
-        id: `usr-sim-${Date.now()}`,
-        name: credentials.email.split('@')[0],
-        email: credentials.email,
-        initials: formatUserInitials(credentials.email),
-      }
-      return { token: `sim-token-${Date.now()}`, user: simulatedUser }
-    }
     throw new Error(err.message || 'Unable to connect to authentication service')
   }
 }
@@ -826,15 +819,6 @@ export async function registerApi(data: {
       !err.message.includes('ECONNREFUSED')
     ) {
       throw err
-    }
-    if (typeof window === 'undefined' || process.env.NODE_ENV === 'test') {
-      const simulatedUser: UserProfile = {
-        id: `usr-sim-${Date.now()}`,
-        name: data.name,
-        email: data.email,
-        initials: formatUserInitials(data.name),
-      }
-      return { token: `sim-token-${Date.now()}`, user: simulatedUser }
     }
     throw new Error(err.message || 'Unable to connect to authentication service')
   }
@@ -1129,7 +1113,7 @@ export async function fetchCommunityPostsApi(params?: {
       })
       if (res.ok) {
         const json = await res.json()
-        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        if (json.success && Array.isArray(json.data)) {
           const mapped = json.data.map(mapBackendCommunityPostToFrontend)
           saveCommunityPosts(mapped)
           return { success: true, data: mapped }
@@ -1145,6 +1129,20 @@ export async function fetchCommunityPostsApi(params?: {
   return { success: true, data: posts }
 }
 
+async function communityMutation(path: string, body?: unknown) {
+  let res: Response
+  try {
+    res = await fetch(path, { method: 'POST', headers: defaultHeaders(), body: body === undefined ? undefined : JSON.stringify(body) })
+  } catch {
+    throw new Error('Unable to connect to the community service. Please try again.')
+  }
+  const json = await res.json().catch(() => null)
+  if (!res.ok || !json?.success || !json.data) {
+    throw new Error(json?.error || 'The community action could not be saved. Please try again.')
+  }
+  return json.data
+}
+
 export async function createCommunityPostApi(payload: {
   title: string
   description: string
@@ -1156,97 +1154,18 @@ export async function createCommunityPostApi(payload: {
   imageUrl?: string
   disclaimerAgreed: boolean
 }) {
-  if (typeof window !== 'undefined') {
-    try {
-      const res = await fetch('/api/community', {
-        method: 'POST',
-        headers: defaultHeaders(),
-        body: JSON.stringify(payload),
-      })
-      if (res.ok) {
-        const json = await res.json()
-        if (json.success && json.data) {
-          const newPost = mapBackendCommunityPostToFrontend(json.data)
-          const existing = getStoredCommunityPosts()
-          saveCommunityPosts([newPost, ...existing.filter((p) => p.id !== newPost.id)])
-          return newPost
-        }
-      }
-    } catch {
-      // Offline fallback
-    }
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, 100))
-  const existingPosts = getStoredCommunityPosts()
-  const authorName = 'You (Contributor)'
-  const authorInitials = 'YO'
-
-  const newPost: CommunityPost = {
-    id: `post-local-${Date.now()}`,
-    title: payload.title.trim(),
-    category: payload.category || 'General Dispatches',
-    content: payload.description.trim(),
-    sourceLink: payload.sourceUrl?.trim() || undefined,
-    sourceExplanation: payload.sourceExplanation?.trim() || undefined,
-    city: payload.city?.trim() || undefined,
-    status: 'pending',
-    verificationLevel: 'unverified',
-    authorName,
-    authorInitials,
-    createdAt: 'Just now',
-    upvotes: 1,
-    comments: [],
-  }
-
-  const updatedPosts = [newPost, ...existingPosts]
-  saveCommunityPosts(updatedPosts)
-  return newPost
+  const data = await communityMutation('/api/community', payload)
+  const post = mapBackendCommunityPostToFrontend(data)
+  const existing = getStoredCommunityPosts()
+  saveCommunityPosts([post, ...existing.filter((p) => p.id !== post.id)])
+  return post
 }
 
 export async function togglePostReactionApi(postId: string) {
-  if (typeof window !== 'undefined') {
-    try {
-      const res = await fetch(`/api/community/${encodeURIComponent(postId)}/reactions`, {
-        method: 'POST',
-        headers: defaultHeaders(),
-      })
-      if (res.ok) {
-        const json = await res.json()
-        if (json.success && json.data) {
-          // Update cached local copy
-          const posts = getStoredCommunityPosts()
-          const updated = posts.map((p) =>
-            p.id === postId
-              ? {
-                  ...p,
-                  upvotes: json.data.upvotesCount !== undefined ? json.data.upvotesCount : (p.upvotes + (json.data.action === 'added' ? 1 : -1)),
-                  hasUpvoted: json.data.action === 'added',
-                }
-              : p
-          )
-          saveCommunityPosts(updated)
-          return updated.find((p) => p.id === postId) || null
-        }
-      }
-    } catch {
-      // Offline fallback
-    }
-  }
-
-  const posts = getStoredCommunityPosts()
-  let targetPost: CommunityPost | null = null
-  const updated = posts.map((p) => {
-    if (p.id === postId) {
-      const isUpvoted = p.upvotes % 2 === 1
-      const nextUpvotes = isUpvoted ? Math.max(0, p.upvotes - 1) : p.upvotes + 1
-      targetPost = { ...p, upvotes: nextUpvotes, hasUpvoted: !isUpvoted }
-      return targetPost
-    }
-    return p
-  })
-  saveCommunityPosts(updated)
-  return targetPost
+  const data = await communityMutation(`/api/community/${encodeURIComponent(postId)}/reactions`)
+  const reaction = { upvotes: data.totalUpvotes as number, hasUpvoted: Boolean(data.upvoted) }
+  saveCommunityPosts(getStoredCommunityPosts().map((p) => p.id === postId ? { ...p, ...reaction } : p))
+  return reaction
 }
 
 export async function fetchPostCommentsApi(postId: string) {
@@ -1278,57 +1197,16 @@ export async function fetchPostCommentsApi(postId: string) {
 }
 
 export async function addCommentApi(postId: string, content: string) {
-  if (typeof window !== 'undefined') {
-    try {
-      const res = await fetch(`/api/community/${encodeURIComponent(postId)}/comments`, {
-        method: 'POST',
-        headers: defaultHeaders(),
-        body: JSON.stringify({ content: content.trim() }),
-      })
-      if (res.ok) {
-        const json = await res.json()
-        if (json.success && json.data) {
-          const c = json.data
-          const newComment: CommunityComment = {
-            id: String(c.id),
-            authorName: c.author?.name || 'You (Reader)',
-            authorInitials: formatUserInitials(c.author?.name || 'You (Reader)'),
-            content: c.content,
-            createdAt: 'Just now',
-          }
-          const posts = getStoredCommunityPosts()
-          const updated = posts.map((p) =>
-            p.id === postId ? { ...p, comments: [...p.comments, newComment] } : p
-          )
-          saveCommunityPosts(updated)
-          return newComment
-        }
-      }
-    } catch {
-      // Offline fallback
-    }
+  const data = await communityMutation(`/api/community/${encodeURIComponent(postId)}/comments`, { content: content.trim() })
+  const comment: CommunityComment = {
+    id: String(data.id),
+    authorName: data.author?.name || 'Reader',
+    authorInitials: formatUserInitials(data.author?.name || 'Reader'),
+    content: data.content,
+    createdAt: data.createdAt ? new Date(data.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Just now',
   }
-
-  const posts = getStoredCommunityPosts()
-  const newComment: CommunityComment = {
-    id: `c-local-${Date.now()}`,
-    authorName: 'You (Reader)',
-    authorInitials: 'YO',
-    content: content.trim(),
-    createdAt: 'Just now',
-  }
-
-  const updated = posts.map((p) => {
-    if (p.id === postId) {
-      return {
-        ...p,
-        comments: [...p.comments, newComment],
-      }
-    }
-    return p
-  })
-  saveCommunityPosts(updated)
-  return newComment
+  saveCommunityPosts(getStoredCommunityPosts().map((p) => p.id === postId ? { ...p, comments: [...p.comments, comment] } : p))
+  return comment
 }
 
 export async function reportCommunityPostApi(
@@ -1352,7 +1230,7 @@ export async function reportCommunityPostApi(
       // Local fallback
     }
   }
-  return { success: true, message: 'Report noted. Editorial staff will review this dispatch.' }
+  return { success: false, message: 'Unable to submit your report. Please reconnect and try again.' }
 }
 
 export async function moderateCommunityPostApi(
@@ -1512,11 +1390,6 @@ export async function checkClaimEvidenceApi(payload: {
   const articleCtx = payload.articleContext
 
   if (articleCtx && (articleCtx.summary || articleCtx.content)) {
-    const text = `${articleCtx.title || ''} ${articleCtx.summary || ''} ${articleCtx.content || ''}`.toLowerCase()
-    const claimLower = claimText.toLowerCase()
-    const words = claimLower.replace(/[^\w\s]/g, '').split(/\s+/).filter((w) => w.length > 3)
-    const matches = words.filter((w) => text.includes(w))
-    const isSupported = words.length > 0 && matches.length / words.length >= 0.5
 
     const excerpt = (articleCtx.summary || articleCtx.content || '').slice(0, 240)
     const item: EvidenceLensItem = {
@@ -1531,14 +1404,12 @@ export async function checkClaimEvidenceApi(payload: {
       claim: claimText,
       searchAvailable: false,
       searchProvider: 'Primary Article Context (Web Search Offline)',
-      verdict: isSupported ? 'supported' : 'inconclusive',
-      summary: isSupported
-        ? `Claim matches direct reporting in ${articleCtx.publisher || 'accredited article'}.`
-        : 'Claim could not be corroborated from primary article text alone.',
+      verdict: 'inconclusive',
+      summary: 'Claim could not be corroborated from primary article text alone.',
       evidence: {
-        supporting: isSupported ? [item] : [],
+        supporting: [],
         contradicting: [],
-        inconclusive: !isSupported ? [item] : [],
+        inconclusive: [item],
       },
       sources: [{ title: articleCtx.publisher || 'Primary Article', url: articleCtx.url || '#', date: item.date }],
       aiInterpretation: `Evaluated exclusively against the primary article text from ${articleCtx.publisher}. Live web search (Tavily) requires an online server with TAVILY_API_KEY. No external sources were fabricated.`,

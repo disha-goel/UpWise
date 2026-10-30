@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Bookmark, Clock, ExternalLink, Layers } from 'lucide-react'
+import { Bookmark, Clock, ExternalLink, Layers, Heart } from 'lucide-react'
 import { Article, LanguageMode } from '../../types/news'
 
 interface ArticleCardProps {
@@ -8,6 +8,8 @@ interface ArticleCardProps {
   onArticleClick: (article: Article) => void
   isSaved?: boolean
   onToggleSave?: (articleId: string, e: React.MouseEvent) => void
+  isLiked?: boolean
+  onToggleLike?: (articleId: string, e: React.MouseEvent) => void
   variant?: 'standard' | 'compact' | 'featured'
 }
 
@@ -17,6 +19,8 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({
   onArticleClick,
   isSaved = false,
   onToggleSave,
+  isLiked = false,
+  onToggleLike,
   variant = 'standard',
 }) => {
   const [imageError, setImageError] = useState(false)
@@ -125,6 +129,19 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({
               >
                 <ExternalLink className="w-3 h-3 stroke-[1.75]" />
               </a>
+            )}
+            {onToggleLike && (
+              <button
+                type="button"
+                onClick={(e) => onToggleLike(article.id, e)}
+                aria-label={isLiked ? 'Unlike story' : 'Like story'}
+                title={isLiked ? 'Unlike Story' : 'Like Story'}
+                className={`p-1 rounded transition-colors ${
+                  isLiked ? 'text-[#D95D39] bg-[#FBF2EF]' : 'text-[#78716C] hover:text-[#141412] hover:bg-black/5'
+                }`}
+              >
+                <Heart className={`w-3.5 h-3.5 stroke-[1.75] ${isLiked ? 'fill-current text-[#D95D39]' : ''}`} />
+              </button>
             )}
             {onToggleSave && (
               <button

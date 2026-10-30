@@ -10,8 +10,8 @@
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "seed": "tsx prisma/seed.ts",
-    "test": "node --import tsx --test src/tests/auth.test.ts src/tests/map.test.ts"
+    "seed": "tsx src/seed.ts",
+    "test": "node scripts/test.cjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

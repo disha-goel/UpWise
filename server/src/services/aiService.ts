@@ -285,15 +285,6 @@ export async function verifyClaimEvidence(
   if (!searchAvailable) {
     // If article context exists, evaluate strictly against the article without fabricating external web search
     if (req.articleContext && (req.articleContext.content || req.articleContext.summary)) {
-      const articleText = `${req.articleContext.title || ''} ${req.articleContext.summary || ''} ${req.articleContext.content || ''}`.toLowerCase();
-      const claimLower = claim.toLowerCase();
-
-      // Check lexical overlap
-      const claimWords = claimLower.replace(/[^\w\s]/g, '').split(/\s+/).filter((w) => w.length > 3);
-      const matches = claimWords.filter((w) => articleText.includes(w));
-      const matchRatio = claimWords.length > 0 ? matches.length / claimWords.length : 0;
-
-      const isSupported = matchRatio >= 0.5;
       const quoteExcerpt = (req.articleContext.summary || req.articleContext.content || '').slice(0, 260);
 
       const item: EvidenceItem = {
@@ -301,7 +292,7 @@ export async function verifyClaimEvidence(
         sourceUrl: req.articleContext.url || '#',
         quote: quoteExcerpt ? `"...${quoteExcerpt}..."` : 'Reporting covers this development directly.',
         date: req.articleContext.publishedAt ? new Date(req.articleContext.publishedAt).toLocaleDateString() : 'Recent',
-        relevance: isSupported ? 'supporting' : 'inconclusive',
+        relevance: 'inconclusive',
       };
 
       return {
@@ -309,14 +300,12 @@ export async function verifyClaimEvidence(
         claim,
         searchAvailable: false,
         searchProvider: 'Article Primary Source (Web Search Unconfigured)',
-        verdict: isSupported ? 'supported' : 'inconclusive',
-        summary: isSupported
-          ? `Claim is supported by reporting in ${req.articleContext.publisher || 'the accredited article'}. Live web search (Tavily) is currently unconfigured.`
-          : `Claim could not be fully substantiated by the provided article context. Live external search is unconfigured.`,
+        verdict: 'inconclusive',
+        summary: 'Claim could not be fully substantiated by the provided article context. Live external search is unavailable.',
         evidence: {
-          supporting: isSupported ? [item] : [],
+          supporting: [],
           contradicting: [],
-          inconclusive: !isSupported ? [item] : [],
+          inconclusive: [item],
         },
         sources: [
           {
@@ -451,15 +440,9 @@ Respond ONLY with valid JSON in this exact structure:
   }
 
   // 4. Fallback classification if Gemini API key is absent but Tavily search succeeded
-  const supporting: EvidenceItem[] = rawSources.slice(0, 2).map((s) => ({
-    sourceTitle: s.title,
-    sourceUrl: s.url,
-    quote: s.snippet,
-    date: s.publishedDate,
-    relevance: 'supporting',
-  }));
+  const supporting: EvidenceItem[] = [];
 
-  const inconclusive: EvidenceItem[] = rawSources.slice(2).map((s) => ({
+  const inconclusive: EvidenceItem[] = rawSources.map((s) => ({
     sourceTitle: s.title,
     sourceUrl: s.url,
     quote: s.snippet,
@@ -472,7 +455,7 @@ Respond ONLY with valid JSON in this exact structure:
     claim,
     searchAvailable: true,
     searchProvider: 'Tavily Search API',
-    verdict: supporting.length > 0 ? 'supported' : 'inconclusive',
+    verdict: 'inconclusive',
     summary: `Retrieved ${rawSources.length} external web sources matching the claim.`,
     evidence: { supporting, contradicting: [], inconclusive },
     sources: rawSources.map((s) => ({ title: s.title, url: s.url, date: s.publishedDate })),

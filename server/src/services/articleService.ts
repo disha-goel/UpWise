@@ -1,3 +1,4 @@
+import { publicationDateRange } from './dateRange.js';
 import prisma from '../db.js';
 import { FeedQueryParams, PaginatedResponse, ArticleItem, CategoryInfo, MapQueryParams } from '../types/index.js';
 import { Prisma } from '@prisma/client';
@@ -136,39 +137,8 @@ export async function getArticles(params: FeedQueryParams): Promise<PaginatedRes
     ];
   }
 
-  // Date filters based on original publishedAt timestamp
-  const now = new Date();
-  if (params.dateRange === 'today') {
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    where.publishedAt = { gte: startOfToday };
-  } else if (params.dateRange === 'yesterday') {
-    const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    const endOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, -1);
-    where.publishedAt = {
-      gte: startOfYesterday,
-      lte: endOfYesterday,
-    };
-  } else if (params.dateRange === '7d') {
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    where.publishedAt = { gte: sevenDaysAgo };
-  } else if (params.dateRange === '30d') {
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    where.publishedAt = { gte: thirtyDaysAgo };
-  } else if (params.dateRange === 'custom') {
-    const dateCondition: { gte?: Date; lte?: Date } = {};
-    if (params.startDate) {
-      dateCondition.gte = new Date(params.startDate);
-    }
-    if (params.endDate) {
-      // Include up to end of the selected day
-      const end = new Date(params.endDate);
-      end.setHours(23, 59, 59, 999);
-      dateCondition.lte = end;
-    }
-    if (dateCondition.gte || dateCondition.lte) {
-      where.publishedAt = dateCondition;
-    }
-  }
+  const dateRange = publicationDateRange(params.dateRange, params.startDate, params.endDate);
+  if (dateRange) where.publishedAt = dateRange;
 
   // Sorting
   let orderBy: Prisma.ArticleOrderByWithRelationInput = { publishedAt: 'desc' };
@@ -450,31 +420,8 @@ export async function getMapArticles(params: MapQueryParams): Promise<{
     where.language = params.language;
   }
 
-  // 6. Date filters
-  const now = new Date();
-  if (params.dateRange === 'today') {
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    where.publishedAt = { gte: startOfToday };
-  } else if (params.dateRange === 'yesterday') {
-    const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    const endOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, -1);
-    where.publishedAt = { gte: startOfYesterday, lte: endOfYesterday };
-  } else if (params.dateRange === '7d' || (params.dateRange as any) === 'week') {
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    where.publishedAt = { gte: sevenDaysAgo };
-  } else if (params.dateRange === '30d' || (params.dateRange as any) === 'month') {
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    where.publishedAt = { gte: thirtyDaysAgo };
-  } else if (params.dateRange === 'custom') {
-    const dateCondition: { gte?: Date; lte?: Date } = {};
-    if (params.startDate) dateCondition.gte = new Date(params.startDate);
-    if (params.endDate) {
-      const end = new Date(params.endDate);
-      end.setHours(23, 59, 59, 999);
-      dateCondition.lte = end;
-    }
-    if (dateCondition.gte || dateCondition.lte) where.publishedAt = dateCondition;
-  }
+  const dateRange = publicationDateRange(params.dateRange, params.startDate, params.endDate);
+  if (dateRange) where.publishedAt = dateRange;
 
   // 7. Sorting
   let orderBy: Prisma.ArticleOrderByWithRelationInput = { publishedAt: 'desc' };
@@ -534,11 +481,6 @@ export async function getMapArticles(params: MapQueryParams): Promise<{
     total = dbTotal;
     articles = dbArticles as unknown as ArticleItem[];
 
-    // If database returned 0 articles (e.g. not seeded yet), fall back to seed articles
-    if (total === 0) {
-      articles = getFallbackMapArticles(params);
-      total = articles.length;
-    }
   } catch (_dbError) {
     // Database connection unavailable or in standalone/test mode; fall back gracefully
     articles = getFallbackMapArticles(params);
@@ -674,6 +616,12 @@ export function getFallbackMapArticles(params: MapQueryParams): ArticleItem[] {
   if (params.language && params.language !== 'all') {
     list = list.filter((a) => a.language === params.language);
   }
+
+  const dateRange = publicationDateRange(params.dateRange, params.startDate, params.endDate);
+  if (dateRange) list = list.filter((article) => {
+    const timestamp = +new Date(article.publishedAt);
+    return (!dateRange.gte || timestamp >= +dateRange.gte) && (!dateRange.lt || timestamp < +dateRange.lt);
+  });
 
   // Sort
   if (params.sort === 'oldest') {

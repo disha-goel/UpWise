@@ -1,8 +1,7 @@
 import crypto from 'crypto';
 import prisma from '../db.js';
-import { readUsersFromFile } from './userStore.js';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'upwise-editorial-secret-key-2026';
+import { readUsersFromFile, isDemoUser, reconcileUserId } from './userStore.js';
+import { getJwtSecret, demoUsersEnabled } from '../config.js';
 
 export interface AuthUser {
   id: string;
@@ -69,6 +68,7 @@ export function createToken(user: { id: string; email: string; role: string }): 
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(
     JSON.stringify({
+      jti: crypto.randomUUID(),
       sub: user.id,
       email: user.email,
       role: user.role,
@@ -77,7 +77,7 @@ export function createToken(user: { id: string; email: string; role: string }): 
   ).toString('base64url');
 
   const signature = crypto
-    .createHmac('sha256', JWT_SECRET)
+    .createHmac('sha256', getJwtSecret())
     .update(`${header}.${payload}`)
     .digest('base64url');
 
@@ -94,7 +94,7 @@ export function verifyToken(token: string): { sub: string; email: string; role: 
     const [header, payload, signature] = parts;
 
     const expectedSig = crypto
-      .createHmac('sha256', JWT_SECRET)
+      .createHmac('sha256', getJwtSecret())
       .update(`${header}.${payload}`)
       .digest('base64url');
 
@@ -105,7 +105,7 @@ export function verifyToken(token: string): { sub: string; email: string; role: 
     }
 
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
-    if (data.exp && data.exp < Math.floor(Date.now() / 1000)) {
+    if (!data || typeof data.sub !== 'string' || !data.sub || typeof data.email !== 'string' || !['user', 'reviewer', 'admin'].includes(data.role) || typeof data.exp !== 'number' || !Number.isFinite(data.exp) || data.exp <= Math.floor(Date.now() / 1000)) {
       return null; // Expired
     }
 
@@ -115,50 +115,24 @@ export function verifyToken(token: string): { sub: string; email: string; role: 
   }
 }
 
-// Seed default accounts in users.json and Prisma (if connected)
+// Keep persisted demo/user IDs consistent across the JSON and database stores.
 export async function seedDefaultUsers(): Promise<void> {
-  await readUsersFromFile();
-
-  const defaultAccounts = [
-    {
-      name: 'Aarav Sharma (Chief Editor)',
-      email: 'editor@upwise.news',
-      password: 'password123',
-      role: 'reviewer',
-      city: 'New Delhi',
-    },
-    {
-      name: 'Priya Patel (Citizen Reporter)',
-      email: 'citizen@upwise.news',
-      password: 'password123',
-      role: 'user',
-      city: 'Bengaluru',
-    },
-    {
-      name: 'Rohan Verma (Local Correspondent)',
-      email: 'reporter@upwise.news',
-      password: 'password123',
-      role: 'user',
-      city: 'Mumbai',
-    },
-  ];
-
+  const users = await readUsersFromFile();
   try {
-    for (const acc of defaultAccounts) {
-      const exists = await prisma.user.findUnique({ where: { email: acc.email } });
-      if (!exists) {
-        await prisma.user.create({
-          data: {
-            name: acc.name,
-            email: acc.email,
-            password: hashPassword(acc.password),
-            role: acc.role,
-            city: acc.city,
-          },
-        });
-      }
+    for (const user of users) {
+      if (!demoUsersEnabled && isDemoUser(user)) continue;
+      const stored = await prisma.user.upsert({
+        where: { email: user.email },
+        update: {},
+        create: {
+          id: user.id, name: user.name, email: user.email, password: user.password,
+          role: user.role, city: user.city, language: user.language, topics: user.topics,
+          interests: { create: user.interests.map((category) => ({ category })) },
+        },
+      });
+      if (stored.id !== user.id) await reconcileUserId(user.email, stored.id);
     }
-  } catch {
-    // Database unavailable, users.json already initialized
+  } catch (error) {
+    console.warn('[UserStore] Database synchronization unavailable:', (error as Error).message);
   }
 }

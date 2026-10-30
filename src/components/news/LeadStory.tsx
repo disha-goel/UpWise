@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Bookmark, Clock, ArrowRight, ExternalLink, MapPin } from 'lucide-react'
+import { Bookmark, Clock, ArrowRight, ExternalLink, MapPin, Heart } from 'lucide-react'
 import { Article, LanguageMode } from '../../types/news'
 
 interface LeadStoryProps {
@@ -8,6 +8,8 @@ interface LeadStoryProps {
   onArticleClick: (article: Article) => void
   isSaved?: boolean
   onToggleSave?: (articleId: string, e: React.MouseEvent) => void
+  isLiked?: boolean
+  onToggleLike?: (articleId: string, e: React.MouseEvent) => void
 }
 
 export const LeadStory: React.FC<LeadStoryProps> = ({
@@ -16,6 +18,8 @@ export const LeadStory: React.FC<LeadStoryProps> = ({
   onArticleClick,
   isSaved = false,
   onToggleSave,
+  isLiked = false,
+  onToggleLike,
 }) => {
   const [imageError, setImageError] = useState(false)
   const isHindi = language === 'hi'
@@ -101,6 +105,22 @@ export const LeadStory: React.FC<LeadStoryProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {onToggleLike && (
+                <button
+                  type="button"
+                  onClick={(e) => onToggleLike(article.id, e)}
+                  aria-label={isLiked ? 'Unlike story' : 'Like story'}
+                  title={isLiked ? 'Unlike Story' : 'Like Story'}
+                  className={`p-2 rounded-full border transition-all ${
+                    isLiked
+                      ? 'text-[#D95D39] bg-[#FBF2EF] border-[#F3D5CC]'
+                      : 'text-[#78716C] hover:text-[#141412] bg-white hover:bg-[#FAF7F2] border-[#E8E2D8]'
+                  }`}
+                >
+                  <Heart className={`w-3.5 h-3.5 stroke-[1.75] ${isLiked ? 'fill-current text-[#D95D39]' : ''}`} />
+                </button>
+              )}
+
               {onToggleSave && (
                 <button
                   type="button"

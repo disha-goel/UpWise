@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import prisma from '../db.js';
+import { DATA_DIR, demoUsersEnabled } from '../config.js';
 
 export interface StoredUser {
   id: string;
@@ -19,15 +20,12 @@ export interface StoredUser {
 
 export type SafeUser = Omit<StoredUser, 'password'>;
 
-function resolveDataDir(): string {
-  const cwd = process.cwd();
-  if (path.basename(cwd) === 'server') {
-    return path.resolve(cwd, 'data');
-  }
-  return path.resolve(cwd, 'server', 'data');
+export const DEMO_USER_IDS = new Set(['usr_editor', 'usr_citizen', 'usr_reporter']);
+const DEMO_EMAILS = new Set(['editor@upwise.news', 'citizen@upwise.news', 'reporter@upwise.news']);
+export function isDemoUser(user: { id: string; email: string }): boolean {
+  return DEMO_USER_IDS.has(user.id) || DEMO_EMAILS.has(user.email.toLowerCase());
 }
 
-const DATA_DIR = resolveDataDir();
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
 // Write queue to prevent concurrent write collisions on the JSON store
@@ -58,6 +56,7 @@ export function sanitizeUser(user: StoredUser): SafeUser {
 }
 
 export function getInitialDemoUsers(): StoredUser[] {
+  if (!demoUsersEnabled) return [];
   const now = new Date().toISOString();
   return [
     {
@@ -113,38 +112,36 @@ export async function readUsersFromFile(): Promise<StoredUser[]> {
   try {
     const raw = await fs.promises.readFile(USERS_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed)) {
       return parsed;
     }
-    const defaults = getInitialDemoUsers();
-    await writeUsersToFile(defaults);
-    return defaults;
+    throw new Error('The user store must contain a JSON array');
   } catch (err) {
-    console.warn('[UserStore] Error reading users.json, initializing defaults:', (err as Error).message);
-    const defaults = getInitialDemoUsers();
-    await writeUsersToFile(defaults);
-    return defaults;
+    throw new Error(`Unable to read user accounts: ${(err as Error).message}`);
   }
 }
 
 export async function writeUsersToFile(users: StoredUser[]): Promise<void> {
   ensureDataDir();
-  return queueWrite(async () => {
-    const tmpFile = `${USERS_FILE}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
-    const data = JSON.stringify(users, null, 2);
-    await fs.promises.writeFile(tmpFile, data, 'utf-8');
-    await fs.promises.rename(tmpFile, USERS_FILE);
-  });
+  return queueWrite(() => persistUsers(users));
+}
+
+async function persistUsers(users: StoredUser[]): Promise<void> {
+  const tmpFile = `${USERS_FILE}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
+  const data = JSON.stringify(users, null, 2);
+  await fs.promises.writeFile(tmpFile, data, 'utf-8');
+  await fs.promises.rename(tmpFile, USERS_FILE);
 }
 
 // User lookup by normalized email
 export async function findUserByEmail(email: string): Promise<StoredUser | null> {
   const normalized = email.trim().toLowerCase();
+  if (!demoUsersEnabled && DEMO_EMAILS.has(normalized)) return null;
 
   // Read from JSON file store first
   const users = await readUsersFromFile();
   const match = users.find((u) => u.email.toLowerCase() === normalized);
-  if (match) return match;
+  if (match) return !demoUsersEnabled && isDemoUser(match) ? null : match;
 
   // Secondary check with Prisma if connected
   try {
@@ -176,10 +173,11 @@ export async function findUserByEmail(email: string): Promise<StoredUser | null>
 
 // User lookup by ID
 export async function findUserById(id: string): Promise<StoredUser | null> {
+  if (!demoUsersEnabled && DEMO_USER_IDS.has(id)) return null;
   // Read from JSON file store first
   const users = await readUsersFromFile();
   const match = users.find((u) => u.id === id);
-  if (match) return match;
+  if (match) return !demoUsersEnabled && isDemoUser(match) ? null : match;
 
   // Secondary check with Prisma if connected
   try {
@@ -238,12 +236,16 @@ export async function createUserRecord(userData: {
     updatedAt: now,
   };
 
-  const users = await readUsersFromFile();
-  users.push(newUser);
-  await writeUsersToFile(users);
+  await readUsersFromFile();
+  await queueWrite(async () => {
+    const users = await readUsersFromFile();
+    if (users.some((user) => user.email === normalized)) throw new Error('An account with this email already exists');
+    users.push(newUser);
+    await persistUsers(users);
+  });
 
-  // Non-blocking Prisma sync if available
-  prisma.user.create({
+  // Await synchronization so immediate community actions can use the new user ID.
+  await prisma.user.create({
     data: {
       id: newUser.id,
       name: newUser.name,
@@ -253,6 +255,7 @@ export async function createUserRecord(userData: {
       city: newUser.city,
       language: newUser.language,
       topics: newUser.topics,
+      interests: { create: newUser.interests.map((category) => ({ category })) },
     },
   }).catch(() => {});
 
@@ -269,33 +272,50 @@ export async function updateUserPreferences(
     categories?: string[];
   }
 ): Promise<SafeUser | null> {
-  const users = await readUsersFromFile();
-  const userIndex = users.findIndex((u) => u.id === userId);
+  await readUsersFromFile();
+  return queueWrite(async () => {
+    const users = await readUsersFromFile();
+    const userIndex = users.findIndex((u) => u.id === userId);
 
-  if (userIndex === -1) {
-    return null;
-  }
+    if (userIndex === -1) {
+      return null;
+    }
 
-  const user = users[userIndex];
-  if (updates.city !== undefined) user.city = updates.city;
-  if (updates.language !== undefined) user.language = updates.language === 'hi' ? 'hi' : 'en';
-  if (updates.topics !== undefined) user.topics = updates.topics;
-  if (updates.categories !== undefined) user.interests = updates.categories;
-  user.updatedAt = new Date().toISOString();
+    const user = users[userIndex];
+    if (updates.city !== undefined) user.city = updates.city;
+    if (updates.language !== undefined) user.language = updates.language === 'hi' ? 'hi' : 'en';
+    if (updates.topics !== undefined) user.topics = updates.topics;
+    if (updates.categories !== undefined) user.interests = updates.categories;
+    user.updatedAt = new Date().toISOString();
 
-  users[userIndex] = user;
-  await writeUsersToFile(users);
+    users[userIndex] = user;
+    await persistUsers(users);
 
-  // Non-blocking Prisma update
-  const updateData: any = {};
-  if (updates.city !== undefined) updateData.city = updates.city;
-  if (updates.language !== undefined) updateData.language = updates.language;
-  if (updates.topics !== undefined) updateData.topics = updates.topics;
+    // Synchronize preference changes with the database
+    const updateData: any = {};
+    if (updates.city !== undefined) updateData.city = updates.city;
+    if (updates.language !== undefined) updateData.language = updates.language;
+    if (updates.topics !== undefined) updateData.topics = updates.topics;
 
-  prisma.user.update({
-    where: { id: userId },
-    data: updateData,
-  }).catch(() => {});
+    if (updates.categories !== undefined) updateData.interests = { deleteMany: {}, create: updates.categories.map((category) => ({ category })) };
+    await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+    }).catch(() => {});
 
-  return sanitizeUser(user);
+    return sanitizeUser(user);
+  });
+}
+
+/** Preserve database IDs already referenced by posts and bookmarks. */
+export async function reconcileUserId(email: string, databaseId: string): Promise<void> {
+  await queueWrite(async () => {
+    const users = await readUsersFromFile();
+    const user = users.find((entry) => entry.email.toLowerCase() === email.toLowerCase());
+    if (user && user.id !== databaseId) {
+      user.id = databaseId;
+      user.updatedAt = new Date().toISOString();
+      await persistUsers(users);
+    }
+  });
 }

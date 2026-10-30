@@ -27,7 +27,7 @@ router.get('/publishers', async (_req: Request, res: Response) => {
     const publishers = await getAvailablePublishers();
     res.json({ success: true, data: publishers });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
@@ -37,7 +37,7 @@ router.get('/trending', async (req: Request, res: Response) => {
     const articles = await getTrendingArticles(6, language);
     res.json({ success: true, data: articles });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
@@ -88,7 +88,7 @@ router.get('/articles', optionalAuth, async (req: Request, res: Response) => {
 
     res.json({ success: true, ...result });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
@@ -127,7 +127,7 @@ router.get('/articles/map', async (req: Request, res: Response) => {
 
     res.json({ success: true, ...result });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
@@ -145,7 +145,7 @@ router.get('/search', async (req: Request, res: Response) => {
 
     res.json({ success: true, ...result });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
@@ -160,7 +160,7 @@ router.get('/articles/:id', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: article });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
@@ -184,7 +184,7 @@ router.get('/clusters/:id', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: cluster });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
@@ -193,14 +193,14 @@ router.post('/news/refresh', async (_req: Request, res: Response) => {
     const stats = await refreshAllFeeds();
     res.json({ success: true, message: 'Feeds refreshed successfully', stats });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
 router.get('/bookmarks', optionalAuth, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id || getHeaderString(req.headers['x-user-id']);
-    const guestSessionId = getHeaderString(req.headers['x-guest-session']);
+    const userId = req.user?.id;
+    const guestSessionId = userId ? undefined : getHeaderString(req.headers['x-guest-session']);
 
     if (!userId && !guestSessionId) {
       return res.json({ success: true, data: [] });
@@ -222,17 +222,21 @@ router.get('/bookmarks', optionalAuth, async (req: Request, res: Response) => {
 
     res.json({ success: true, data: bookmarks.map((b) => b.article) });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
 router.post('/bookmarks', optionalAuth, async (req: Request, res: Response) => {
   try {
     const { articleId } = req.body;
-    const userId = req.user?.id || getHeaderString(req.headers['x-user-id']);
-    const guestSessionId = getHeaderString(req.headers['x-guest-session']);
+    const userId = req.user?.id;
+    const guestSessionId = userId ? undefined : getHeaderString(req.headers['x-guest-session']);
 
-    if (!articleId) {
+    if (!userId && !guestSessionId) {
+      return res.status(401).json({ success: false, error: 'Sign in or provide a guest session to save articles' });
+    }
+
+    if (typeof articleId !== 'string' || !articleId.trim()) {
       return res.status(400).json({ success: false, error: 'articleId is required' });
     }
 
@@ -257,7 +261,7 @@ router.post('/bookmarks', optionalAuth, async (req: Request, res: Response) => {
     const bookmark = await prisma.bookmark.create({
       data: {
         articleId,
-        guestSessionId: !userId ? guestSessionId || 'guest-default' : null,
+        guestSessionId: !userId ? guestSessionId : null,
         userId: userId || null,
       },
       include: { article: true },
@@ -265,15 +269,15 @@ router.post('/bookmarks', optionalAuth, async (req: Request, res: Response) => {
 
     res.json({ success: true, data: bookmark });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 
 router.delete('/bookmarks/:articleId', optionalAuth, async (req: Request, res: Response) => {
   try {
     const articleId = Array.isArray(req.params.articleId) ? req.params.articleId[0] : req.params.articleId;
-    const userId = req.user?.id || getHeaderString(req.headers['x-user-id']);
-    const guestSessionId = getHeaderString(req.headers['x-guest-session']);
+    const userId = req.user?.id;
+    const guestSessionId = userId ? undefined : getHeaderString(req.headers['x-guest-session']);
 
     const conditions = [];
     if (userId) conditions.push({ userId });
@@ -290,7 +294,7 @@ router.delete('/bookmarks/:articleId', optionalAuth, async (req: Request, res: R
 
     res.json({ success: true, message: 'Bookmark removed' });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status((error as Error).message.startsWith('Invalid date range:') ? 400 : 500).json({ success: false, error: (error as Error).message });
   }
 });
 

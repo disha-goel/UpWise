@@ -14,11 +14,11 @@ import { CommunityHub } from './components/community/CommunityHub'
 import { EditorialComicsHub } from './components/community/EditorialComicsHub'
 import { NewsGlobeHub } from './components/globe/NewsGlobeHub'
 import { UserProfile } from './types/navigation'
-import { Article, LanguageMode, LayoutMode, DatePreset } from './types/news'
+import { isSupportedLanguage } from './config/languages'
+import { Article, LanguageMode, DatePreset } from './types/news'
 import { MOCK_ARTICLES } from './mock/articles.mock'
 import { CATEGORY_GROUPS } from './mock/categories.mock'
 import { AiChatWidget } from './components/assistant/AiChatWidget'
-import { matchDatePreset } from './utils/dateUtils'
 import {
   fetchArticlesFromBackend,
   fetchServerBookmarks,
@@ -77,21 +77,27 @@ export default function App() {
       if (session) {
         const parsedUser: UserProfile = JSON.parse(session)
         const userLang = localStorage.getItem(`upwise_user_language_${parsedUser.id}`)
-        if (userLang === 'en' || userLang === 'hi') return userLang as LanguageMode
+        if (isSupportedLanguage(userLang)) return userLang
       }
       const globalLang = localStorage.getItem('upwise_user_language')
-      if (globalLang === 'en' || globalLang === 'hi') return globalLang as LanguageMode
+      if (isSupportedLanguage(globalLang)) return globalLang
     } catch {
       // Storage fallback
     }
     return 'en'
   })
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('upwise_user_language', language)
+      if (user?.id) localStorage.setItem(`upwise_user_language_${user.id}`, language)
+    } catch { /* Reading preferences remain available for this session. */ }
+  }, [language, user?.id])
+
   const [datePreset, setDatePreset] = useState<DatePreset>('all')
   const [customStartDate, setCustomStartDate] = useState<string>('')
   const [customEndDate, setCustomEndDate] = useState<string>('')
   const [selectedPublishers, setSelectedPublishers] = useState<string[]>([])
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('grid')
   const [isSavedViewActive, setIsSavedViewActive] = useState<boolean>(false)
 
   const [reducedMotion, setReducedMotion] = useState<boolean>(() => {
@@ -149,6 +155,23 @@ export default function App() {
       return ['art-1', 'art-3']
     }
   })
+
+  const [likedArticleIds, setLikedArticleIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('upwise_liked_articles')
+      return stored ? JSON.parse(stored) : []
+    } catch {
+      return []
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('upwise_liked_articles', JSON.stringify(likedArticleIds))
+    } catch {
+      // Storage fallback
+    }
+  }, [likedArticleIds])
 
   const [readingArticle, setReadingArticle] = useState<Article | null>(null)
   const [activeNotice, setActiveNotice] = useState<string | null>(null)
@@ -220,23 +243,6 @@ export default function App() {
     new Set(articles.map((a) => a.source.name))
   ).sort()
 
-  const filteredCount = articles.filter((article) => {
-    if (isSavedViewActive && !savedArticleIds.includes(article.id)) return false
-    if (selectedCategoryId && article.categoryId !== selectedCategoryId) return false
-    if (selectedSubcategoryId && article.subcategoryId !== selectedSubcategoryId) return false
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      const titleMatch = article.title.toLowerCase().includes(q)
-      const titleHiMatch = article.titleHi?.toLowerCase().includes(q)
-      const deckMatch = article.deck?.toLowerCase().includes(q)
-      const summaryMatch = article.summary.toLowerCase().includes(q)
-      if (!titleMatch && !titleHiMatch && !deckMatch && !summaryMatch) return false
-    }
-    if (selectedPublishers.length > 0 && !selectedPublishers.includes(article.source.name)) return false
-    if (!matchDatePreset(article.publishedDate || article.publishedAt, datePreset, customStartDate, customEndDate)) return false
-    return true
-  }).length
-
   const handleSelectCategory = (groupId: string, subcategoryId?: string) => {
     setDestination('feed')
     setSelectedCategoryId(groupId || null)
@@ -292,6 +298,12 @@ export default function App() {
 
   const handleToggleSave = (articleId: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
+    if (!user) {
+      setReadingArticle(null)
+      showTemporaryNotice('Please sign in to save stories.')
+      setCurrentView('login')
+      return
+    }
     setSavedArticleIds((prev) => {
       const exists = prev.includes(articleId)
       const next = exists ? prev.filter((id) => id !== articleId) : [...prev, articleId]
@@ -305,11 +317,29 @@ export default function App() {
     })
   }
 
-  const handleShareStory = (article: Article, e?: React.MouseEvent) => {
+  const handleToggleLike = (articleId: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(article.originalUrl || window.location.href)
+    if (!user) {
+      setReadingArticle(null)
+      showTemporaryNotice('Please sign in to like stories.')
+      setCurrentView('login')
+      return
+    }
+    setLikedArticleIds((prev) => {
+      const exists = prev.includes(articleId)
+      const next = exists ? prev.filter((id) => id !== articleId) : [...prev, articleId]
+      showTemporaryNotice(exists ? 'Removed from liked stories' : 'Liked story')
+      return next
+    })
+  }
+
+  const handleShareStory = async (article: Article, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(article.originalUrl || window.location.href)
       showTemporaryNotice('Story link copied to clipboard')
+    } catch {
+      showTemporaryNotice('Could not copy the link. Open the original source to share it.')
     }
   }
 
@@ -332,8 +362,8 @@ export default function App() {
           setUserPreferredTopics(JSON.parse(storedTopics))
         }
         const storedLang = localStorage.getItem(`upwise_user_language_${signedInUser.id}`)
-        if (storedLang === 'en' || storedLang === 'hi') {
-          setLanguage(storedLang as LanguageMode)
+        if (isSupportedLanguage(storedLang)) {
+          setLanguage(storedLang)
         }
       } catch {
         // Storage fallback
@@ -384,12 +414,18 @@ export default function App() {
   const handleSignOutClick = () => {
     setUser(null)
     setUserPreferredTopics([])
+    setLikedArticleIds([])
     logoutApi().catch(() => {})
     setCurrentView('feed')
     showTemporaryNotice('Signed out.')
   }
 
   const handleNavigateSaved = () => {
+    if (!user) {
+      showTemporaryNotice('Please sign in to view saved stories.')
+      setCurrentView('login')
+      return
+    }
     setDestination('feed')
     setIsSavedViewActive((prev) => !prev)
   }
@@ -446,10 +482,40 @@ export default function App() {
 
   const activeGroup = CATEGORY_GROUPS.find((g) => g.id === selectedCategoryId)
 
+  const feedFilters = (
+    <AdvancedFilterBar
+      datePreset={datePreset}
+      onDatePresetChange={setDatePreset}
+      customStartDate={customStartDate}
+      customEndDate={customEndDate}
+      onCustomDateChange={(start, end) => {
+        setCustomStartDate(start)
+        setCustomEndDate(end)
+      }}
+      availablePublishers={availablePublishers}
+      selectedPublishers={selectedPublishers}
+      onTogglePublisher={handleTogglePublisher}
+      onSelectAllPublishers={handleSelectAllPublishers}
+      onClearPublishers={handleClearPublishers}
+      activeCategoryName={activeGroup?.name}
+      onClearCategory={() => {
+        setSelectedCategoryId(null)
+        setSelectedSubcategoryId(null)
+      }}
+      searchQuery={searchQuery}
+      onClearSearch={() => setSearchQuery('')}
+      isSavedViewActive={isSavedViewActive}
+      onClearSavedView={() => setIsSavedViewActive(false)}
+      onResetAllFilters={handleClearFilters}
+    />
+  )
+
   return (
     <div className="min-h-screen bg-[#FAF7F2] text-[#141412] flex flex-col font-sans">
       <Header
         user={user}
+        language={language}
+        onLanguageChange={setLanguage}
         selectedCategoryId={selectedCategoryId}
         selectedSubcategoryId={selectedSubcategoryId}
         onSelectCategory={handleSelectCategory}
@@ -477,40 +543,7 @@ export default function App() {
           setDestination('community')
           setOpenCommunityComposer(true)
         }}
-        feedToolbar={
-          destination === 'feed' ? (
-            <AdvancedFilterBar
-              language={language}
-              onLanguageChange={setLanguage}
-              datePreset={datePreset}
-              onDatePresetChange={setDatePreset}
-              customStartDate={customStartDate}
-              customEndDate={customEndDate}
-              onCustomDateChange={(start, end) => {
-                setCustomStartDate(start)
-                setCustomEndDate(end)
-              }}
-              availablePublishers={availablePublishers}
-              selectedPublishers={selectedPublishers}
-              onTogglePublisher={handleTogglePublisher}
-              onSelectAllPublishers={handleSelectAllPublishers}
-              onClearPublishers={handleClearPublishers}
-              layoutMode={layoutMode}
-              onLayoutModeChange={setLayoutMode}
-              activeCategoryName={activeGroup?.name}
-              onClearCategory={() => {
-                setSelectedCategoryId(null)
-                setSelectedSubcategoryId(null)
-              }}
-              searchQuery={searchQuery}
-              onClearSearch={() => setSearchQuery('')}
-              isSavedViewActive={isSavedViewActive}
-              onClearSavedView={() => setIsSavedViewActive(false)}
-              totalResultsCount={filteredCount}
-              onResetAllFilters={handleClearFilters}
-            />
-          ) : undefined
-        }
+
       />
 
       {activeNotice && (
@@ -520,27 +553,26 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pb-12 sm:pb-16 flex gap-6">
-        {destination !== 'feed' && (
-          <NavigationRail
-            activeDestination={destination}
-            onSelectDestination={setDestination}
-            onOpenNewPost={() => {
-              if (!user) {
-                showTemporaryNotice('Please sign in to publish a community dispatch.')
-                setCurrentView('login')
-                return
-              }
-              setDestination('community')
-              setOpenCommunityComposer(true)
-            }}
-            onNavigateHome={handleNavigateHome}
-          />
-        )}
+      <div className="flex-1 w-full px-4 sm:px-6 lg:px-8 pb-12 sm:pb-16 flex gap-6 pt-4 sm:pt-6">
+        <NavigationRail
+          activeDestination={destination}
+          onSelectDestination={setDestination}
+          onOpenNewPost={() => {
+            if (!user) {
+              showTemporaryNotice('Please sign in to publish a community dispatch.')
+              setCurrentView('login')
+              return
+            }
+            setDestination('community')
+            setOpenCommunityComposer(true)
+          }}
+          onNavigateHome={handleNavigateHome}
+        />
 
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 max-w-7xl mx-auto">
           {destination === 'feed' && (
             <NewsFeed
+              filters={feedFilters}
               articles={articles}
               selectedCategoryId={selectedCategoryId}
               selectedSubcategoryId={selectedSubcategoryId}
@@ -551,12 +583,13 @@ export default function App() {
               customStartDate={customStartDate}
               customEndDate={customEndDate}
               selectedPublishers={selectedPublishers}
-              layoutMode={layoutMode}
               isSavedViewActive={isSavedViewActive}
               userPreferredTopics={userPreferredTopics}
               onArticleClick={(article) => setReadingArticle(article)}
               savedArticleIds={savedArticleIds}
               onToggleSave={handleToggleSave}
+              likedArticleIds={likedArticleIds}
+              onToggleLike={handleToggleLike}
               onClearFilters={handleClearFilters}
               onEditPreferences={() => setCurrentView('onboarding')}
               onShareStory={handleShareStory}
@@ -598,6 +631,8 @@ export default function App() {
         onClose={() => setReadingArticle(null)}
         isSaved={readingArticle ? savedArticleIds.includes(readingArticle.id) : false}
         onToggleSave={(id) => handleToggleSave(id)}
+        isLiked={readingArticle ? likedArticleIds.includes(readingArticle.id) : false}
+        onToggleLike={(id) => handleToggleLike(id)}
       />
 
       <CommandDiscoveryOverlay

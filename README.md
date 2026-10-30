@@ -298,7 +298,7 @@ NODE_ENV=development
 CLIENT_URL=http://localhost:5173
 
 # JWT Authentication
-JWT_SECRET=upwise-editorial-secret-key-2026
+JWT_SECRET=
 
 # Optional: Google Gemini API (Generative AI Assistant)
 GEMINI_API_KEY=
@@ -310,6 +310,23 @@ TAVILY_API_KEY=
 ---
 
 ## 6. Getting Started & Development Commands
+
+Install dependencies before running the app:
+
+```bash
+npm ci
+npm --prefix server ci
+cp server/.env.example server/.env
+```
+
+Set `DATABASE_URL` in `server/.env` to your PostgreSQL instance, then run
+`npm --prefix server run prisma:generate`, `npm --prefix server run prisma:push`,
+and `npm --prefix server run seed`. Start frontend and backend in separate terminals.
+Development creates a private signing key in `server/data/.jwt-secret` when
+`JWT_SECRET` is empty. Production requires an explicit secret and does not create
+demo accounts. `npm run test:all` runs both suites using isolated test accounts.
+Community actions require a successful server response. Empty live results remain
+empty, and offline evidence excerpts are shown as inconclusive rather than verified.
 
 ### 1. Root Workspace (Frontend & Fullstack Scripts)
 ```bash

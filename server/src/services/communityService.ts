@@ -23,6 +23,7 @@ export interface GetCommunityPostsQuery {
   limit?: number;
   includePendingForUser?: string;
   currentUserId?: string;
+  isReviewer?: boolean;
 }
 
 export async function getCommunityPosts(query: GetCommunityPostsQuery) {
@@ -49,16 +50,14 @@ export async function getCommunityPosts(query: GetCommunityPostsQuery) {
     ];
   }
 
-  if (query.status && query.status !== 'all') {
-    whereClause.status = query.status;
-  } else if (!query.includePendingForUser) {
-    whereClause.status = 'approved';
-  } else {
-    whereClause.OR = [
+  const visibility = query.isReviewer ? {} : {
+    OR: [
       { status: 'approved' },
-      { authorId: query.includePendingForUser },
-    ];
-  }
+      ...(query.includePendingForUser ? [{ authorId: query.includePendingForUser }] : []),
+    ],
+  };
+  if (query.status && query.status !== 'all') whereClause.status = query.status;
+  whereClause.AND = [visibility];
 
   const [total, posts] = await Promise.all([
     prisma.communityPost.count({ where: whereClause }),

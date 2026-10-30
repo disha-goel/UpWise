@@ -10,5 +10,6 @@ server/.env.*
 !server/.env.example
 *.log
 coverage/
+server/data/.jwt-secret
 .DS_Store
 Thumbs.db

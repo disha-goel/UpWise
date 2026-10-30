@@ -1,18 +1,13 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import path from 'path';
-
-dotenv.config();
-if (!process.env.DATABASE_URL) {
-  dotenv.config({ path: path.resolve(process.cwd(), 'server/.env') });
-}
+import './config.js';
 
 import articleRoutes from './routes/articleRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import communityRoutes from './routes/communityRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
 import prisma from './db.js';
+import { getJwtSecret } from './config.js';
 import { seedInitialArticles, refreshAllFeeds } from './ingestion/ingestionService.js';
 import { seedDefaultUsers } from './services/authService.js';
 import { seedCommunityPosts } from './services/communityService.js';
@@ -24,7 +19,7 @@ app.use(
   cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-guest-session', 'x-user-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-guest-session'],
   })
 );
 
@@ -84,12 +79,10 @@ app.use((err: Error, _req: Request, res: Response, _next: express.NextFunction) 
 
 export { app };
 
-const isTestEnvironment =
-  process.env.NODE_ENV === 'test' ||
-  process.argv.includes('--test') ||
-  process.argv.some((arg) => arg.includes('test'));
+const isTestEnvironment = process.env.NODE_ENV === 'test';
 
 if (!isTestEnvironment) {
+  getJwtSecret();
   app.listen(PORT, async () => {
     console.log(`=========================================`);
     console.log(`🚀 UPWISE Backend listening on http://localhost:${PORT}`);

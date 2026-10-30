@@ -88,3 +88,7 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #BCB4A4;
 }
+
+/* Topic pills scroll horizontally without distracting from the story feed. */
+.feed-topics { scrollbar-width: none; }
+.feed-topics::-webkit-scrollbar { display: none; }

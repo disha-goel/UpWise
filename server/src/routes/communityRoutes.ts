@@ -34,6 +34,7 @@ router.get('/', optionalAuth, async (req: Request, res: Response) => {
       limit: limit ? parseInt(limit as string, 10) : 12,
       includePendingForUser: req.user?.id,
       currentUserId: req.user?.id,
+      isReviewer: req.user?.role === 'reviewer' || req.user?.role === 'admin',
     });
 
     res.json({ success: true, ...result });
@@ -47,7 +48,7 @@ router.get('/:id', optionalAuth, async (req: Request, res: Response) => {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const post = await getCommunityPostById(id, req.user?.id);
 
-    if (!post) {
+    if (!post || (post.status !== 'approved' && post.authorId !== req.user?.id && req.user?.role !== 'reviewer' && req.user?.role !== 'admin')) {
       return res.status(404).json({ success: false, error: 'Community post not found' });
     }
 
@@ -82,7 +83,7 @@ router.post('/', requireAuth, async (req: Request, res: Response) => {
       sourceUrl,
       sourceExplanation,
       imageUrl,
-      disclaimerAgreed: Boolean(disclaimerAgreed),
+      disclaimerAgreed: disclaimerAgreed === true,
       authorId: req.user!.id,
     });
 
@@ -147,9 +148,13 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/:id/comments', async (req: Request, res: Response) => {
+router.get('/:id/comments', optionalAuth, async (req: Request, res: Response) => {
   try {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const post = await getCommunityPostById(id, req.user?.id);
+    if (!post || (post.status !== 'approved' && post.authorId !== req.user?.id && req.user?.role !== 'reviewer' && req.user?.role !== 'admin')) {
+      return res.status(404).json({ success: false, error: 'Community post not found' });
+    }
     const comments = await getCommentsForPost(id);
     res.json({ success: true, data: comments });
   } catch (error) {

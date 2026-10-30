@@ -2,19 +2,15 @@ import React, { useState, useRef, useEffect } from 'react'
 import {
   Calendar,
   Building2,
-  LayoutGrid,
-  Layers,
   X,
   ChevronDown,
   Search,
   Check,
   RotateCcw,
 } from 'lucide-react'
-import { LanguageMode, LayoutMode, DatePreset } from '../../types/news'
+import { DatePreset } from '../../types/news'
 
 interface AdvancedFilterBarProps {
-  language: LanguageMode
-  onLanguageChange: (lang: LanguageMode) => void
   datePreset: DatePreset
   onDatePresetChange: (preset: DatePreset) => void
   customStartDate: string
@@ -25,21 +21,16 @@ interface AdvancedFilterBarProps {
   onTogglePublisher: (pub: string) => void
   onSelectAllPublishers: () => void
   onClearPublishers: () => void
-  layoutMode: LayoutMode
-  onLayoutModeChange: (mode: LayoutMode) => void
   activeCategoryName?: string | null
   onClearCategory?: () => void
   searchQuery?: string
   onClearSearch?: () => void
   isSavedViewActive?: boolean
   onClearSavedView?: () => void
-  totalResultsCount: number
   onResetAllFilters: () => void
 }
 
 export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
-  language,
-  onLanguageChange,
   datePreset,
   onDatePresetChange,
   customStartDate,
@@ -50,15 +41,12 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
   onTogglePublisher,
   onSelectAllPublishers,
   onClearPublishers,
-  layoutMode,
-  onLayoutModeChange,
   activeCategoryName,
   onClearCategory,
   searchQuery,
   onClearSearch,
   isSavedViewActive = false,
   onClearSavedView,
-  totalResultsCount,
   onResetAllFilters,
 }) => {
   const [isDateOpen, setIsDateOpen] = useState(false)
@@ -119,7 +107,7 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
       case 'week':
         return 'Past 7 days'
       case 'month':
-        return 'This Month'
+        return 'Past 30 Days'
       case 'custom':
         return customStartDate && customEndDate
           ? `${customStartDate.slice(5)} to ${customEndDate.slice(5)}`
@@ -146,32 +134,6 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
           
           {/* Left: Compact Filters */}
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-            {/* Language Switcher */}
-            <div className="inline-flex p-0.5 bg-white border border-[#E8E2D8] rounded text-[11px] font-medium">
-              <button
-                type="button"
-                onClick={() => onLanguageChange('en')}
-                className={`px-2 py-0.5 rounded transition-all ${
-                  language === 'en'
-                    ? 'bg-[#141412] text-[#FAF7F2] font-semibold'
-                    : 'text-[#78716C] hover:text-[#141412]'
-                }`}
-              >
-                EN
-              </button>
-              <button
-                type="button"
-                onClick={() => onLanguageChange('hi')}
-                className={`px-2 py-0.5 rounded transition-all ${
-                  language === 'hi'
-                    ? 'bg-[#141412] text-[#FAF7F2] font-semibold'
-                    : 'text-[#78716C] hover:text-[#141412]'
-                }`}
-              >
-                HI
-              </button>
-            </div>
-
             {/* Date Filter */}
             <div ref={dateRef} className="relative">
               <button
@@ -180,7 +142,7 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
                   setIsDateOpen((prev) => !prev)
                   setIsPublisherOpen(false)
                 }}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-medium transition-colors ${
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-sm font-medium transition-colors ${
                   datePreset !== 'all'
                     ? 'bg-[#FBF2EF] border-[#F3D5CC] text-[#D95D39] font-semibold'
                     : 'bg-white border-[#E8E2D8] text-[#55504A] hover:text-[#141412]'
@@ -201,7 +163,7 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
                       { id: 'today', label: 'Today' },
                       { id: 'yesterday', label: 'Yesterday' },
                       { id: 'week', label: 'Past 7 Days' },
-                      { id: 'month', label: 'This Month' },
+                      { id: 'month', label: 'Past 30 Days' },
                     ].map((opt) => (
                       <button
                         key={opt.id}
@@ -269,7 +231,7 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
                   setIsPublisherOpen((prev) => !prev)
                   setIsDateOpen(false)
                 }}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-medium transition-colors ${
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-sm font-medium transition-colors ${
                   selectedPublishers.length > 0
                     ? 'bg-[#FBF2EF] border-[#F3D5CC] text-[#D95D39] font-semibold'
                     : 'bg-white border-[#E8E2D8] text-[#55504A] hover:text-[#141412]'
@@ -289,7 +251,7 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
               </button>
 
               {isPublisherOpen && (
-                <div className="absolute left-0 top-full mt-1.5 w-68 bg-white border border-[#E8E2D8] rounded-lg shadow-popover z-50 p-2 text-xs animate-in fade-in-50 duration-150">
+                <div className="absolute right-0 top-full mt-1.5 w-56 max-w-[calc(100vw-2rem)] bg-white border border-[#E8E2D8] rounded-lg shadow-popover z-50 p-2 text-xs animate-in fade-in-50 duration-150">
                   <div className="flex items-center gap-1.5 px-2 py-1 bg-[#FAF7F2] border border-[#E8E2D8] rounded mb-1.5">
                     <Search className="w-3 h-3 text-[#78716C]" />
                     <input
@@ -346,44 +308,6 @@ export const AdvancedFilterBar: React.FC<AdvancedFilterBarProps> = ({
             </div>
           </div>
 
-          {/* Right: Story Count & Layout Switcher */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <span className="text-[11px] font-normal text-[#78716C] hidden sm:inline">
-              {totalResultsCount} {totalResultsCount === 1 ? 'story' : 'stories'}
-            </span>
-
-            <div className="inline-flex p-0.5 bg-white border border-[#E8E2D8] rounded text-[11px] font-medium">
-              <button
-                type="button"
-                onClick={() => onLayoutModeChange('grid')}
-                aria-label="Newspaper front page layout"
-                title="Front Page Layout"
-                className={`flex items-center gap-1 px-2 py-0.5 rounded transition-all ${
-                  layoutMode === 'grid'
-                    ? 'bg-[#141412] text-[#FAF7F2] font-semibold'
-                    : 'text-[#78716C] hover:text-[#141412]'
-                }`}
-              >
-                <LayoutGrid className="w-3 h-3" />
-                <span>Front Page</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onLayoutModeChange('stack')}
-                aria-label="Digest stream layout"
-                title="Digest Stream"
-                className={`flex items-center gap-1 px-2 py-0.5 rounded transition-all ${
-                  layoutMode === 'stack'
-                    ? 'bg-[#141412] text-[#FAF7F2] font-semibold'
-                    : 'text-[#78716C] hover:text-[#141412]'
-                }`}
-              >
-                <Layers className="w-3 h-3" />
-                <span>Digest</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Active Filter Chips (if any filter is on) */}

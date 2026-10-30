@@ -1,4 +1,8 @@
-import test from 'node:test'
+import test, { mock } from 'node:test'
+
+// The date fixtures intentionally describe this fixed India calendar day.
+test.before(() => mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-29T06:00:00Z') }))
+test.after(() => mock.timers.reset())
 import assert from 'node:assert/strict'
 
 import { matchDatePreset, formatPublicationDate } from '../utils/dateUtils.js'
@@ -38,7 +42,7 @@ test('Date Filtering: Past 7 days (week) matches correctly', () => {
   assert.equal(matchDatePreset('2026-10-10', 'week'), false, '19 days ago should not be in past 7 days')
 })
 
-test('Date Filtering: This Month matches correctly', () => {
+test('Date Filtering: Past 30 days matches correctly', () => {
   assert.equal(matchDatePreset('2026-10-29', 'month'), true, 'Oct 29 should be in this month')
   assert.equal(matchDatePreset('2026-10-08', 'month'), true, 'Oct 08 should be in this month')
   assert.equal(matchDatePreset('2026-08-15', 'month'), false, 'August should not be in October')
@@ -134,7 +138,13 @@ test('Community Section: Data structure and category coverage', () => {
   })
 })
 
-test('Client-Side Auth: Form validation and simulated session generation', async () => {
+test('Client-Side Auth: Maps successful server authentication responses', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
+    const payload = JSON.parse(init.body as string)
+    return Response.json({ success: true, token: 'server-signed-token', user: {
+      id: 'test-user', name: payload.name || 'Editor', email: payload.email, role: 'user',
+    } })
+  })
   const loginRes = await loginApi({ email: 'editorial@upwise.hub', password: 'password123' })
   assert.ok(loginRes.token, 'Generates simulated token')
   assert.equal(loginRes.user.email, 'editorial@upwise.hub')
@@ -263,8 +273,9 @@ test('Evidence Lens: Evaluates claims without fabricating external sources when 
 
   assert.equal(result.success, true)
   assert.equal(result.searchAvailable, false)
-  assert.equal(result.verdict, 'supported')
-  assert.ok(result.evidence.supporting.length > 0, 'Extracts supporting quote from accredited source')
+  assert.equal(result.verdict, 'inconclusive')
+  assert.equal(result.evidence.supporting.length, 0, 'Word overlap cannot verify a claim')
+  assert.ok(result.evidence.inconclusive.length > 0)
   assert.equal(result.evidence.contradicting.length, 0)
   assert.ok(result.sources.length > 0)
   assert.ok(result.sources[0].title.includes('The Hindu'))

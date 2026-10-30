@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   Newspaper,
   Layers,
+  Heart,
 } from 'lucide-react'
 import { Article, LanguageMode } from '../../types/news'
 
@@ -18,6 +19,8 @@ interface ArticleReaderPanelProps {
   onClose: () => void
   isSaved?: boolean
   onToggleSave?: (articleId: string) => void
+  isLiked?: boolean
+  onToggleLike?: (articleId: string) => void
 }
 
 export const ArticleReaderPanel: React.FC<ArticleReaderPanelProps> = ({
@@ -26,6 +29,8 @@ export const ArticleReaderPanel: React.FC<ArticleReaderPanelProps> = ({
   onClose,
   isSaved = false,
   onToggleSave,
+  isLiked = false,
+  onToggleLike,
 }) => {
   const [imageError, setImageError] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -110,6 +115,22 @@ export const ArticleReaderPanel: React.FC<ArticleReaderPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onToggleLike && (
+              <button
+                type="button"
+                onClick={() => onToggleLike(article.id)}
+                className={`p-1.5 rounded-md hover:bg-white border transition-colors flex items-center gap-1.5 text-xs font-medium ${
+                  isLiked
+                    ? 'text-[#D95D39] bg-[#FBF2EF] border-[#F3D5CC]'
+                    : 'text-[#55504A] hover:text-[#141412] border-[#E8E2D8]'
+                }`}
+                aria-label={isLiked ? 'Unlike story' : 'Like story'}
+              >
+                <Heart className={`w-3.5 h-3.5 stroke-[1.75] ${isLiked ? 'fill-current text-[#D95D39]' : ''}`} />
+                <span className="hidden sm:inline">{isLiked ? 'Liked' : 'Like'}</span>
+              </button>
+            )}
+
             {onToggleSave && (
               <button
                 type="button"
